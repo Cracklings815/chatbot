@@ -54,11 +54,10 @@ const Chatbot = () => {
       {/* Main Chatbot Container */}
       <div className="bg-white p-6 rounded-lg shadow-lg w-full max-w-3xl relative z-10">
         <h1 className="text-4xl font-bold text-center text-gray-800 mb-4">
-          Chatbot
+          ChikaBot
         </h1>
         <p className="text-gray-600 text-center mb-6">
-          Chat with an AI-powered assistant using the Hugging Face API. Type your
-          message below to start the conversation.
+        This is a chat-only bot. Type your message to get started.
         </p>
         <div className="bg-gray-50 p-4 rounded-lg shadow-inner h-80 overflow-y-auto">
           {messages.map((msg, index) => (
