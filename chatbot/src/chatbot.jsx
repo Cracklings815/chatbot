@@ -16,7 +16,7 @@ const Chatbot = () => {
   const genAI = new GoogleGenerativeAI("AIzaSyDSfVp6iTI_-pBxJGhMHY1S9kXjAqubuKw");
   const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
 
-  // Initialize Speech Recognition
+  // Speech Recognition initialization remains the same...
   useEffect(() => {
     if ('webkitSpeechRecognition' in window) {
       const recognition = new webkitSpeechRecognition();
@@ -43,7 +43,7 @@ const Chatbot = () => {
     }
   }, []);
 
-  // Handle Speech Recognition
+  // Handle Speech Recognition remains the same...
   const toggleListening = () => {
     if (!recognition) {
       setErrorMessage("Speech recognition is not supported in your browser.");
@@ -59,7 +59,7 @@ const Chatbot = () => {
     setIsListening(!isListening);
   };
 
-  // Helper function to convert File to base64
+  // Helper function to convert File to base64 remains the same...
   const fileToGenerativePart = (file) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -77,7 +77,7 @@ const Chatbot = () => {
     });
   };
 
-  // Enhanced Image Upload handler
+  // Modified Image Upload handler
   const handleImageUpload = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -89,6 +89,14 @@ const Chatbot = () => {
       // Create a blob URL for the file
       const imageUrl = URL.createObjectURL(file);
       
+      // Add user's image message
+      const userImageMessage = {
+        sender: "user",
+        type: "image",
+        imageUrl: imageUrl,
+      };
+      setMessages(prev => [...prev, userImageMessage]);
+
       // Convert image to base64 for Gemini
       const base64Image = await fileToGenerativePart(file);
       
@@ -113,10 +121,7 @@ const Chatbot = () => {
         }
       );
 
-      // Clean up the blob URL
-      URL.revokeObjectURL(imageUrl);
-
-      // Add both the description and any detected text to messages
+      // Add bot's response message
       const botMessage = {
         sender: "bot",
         text: `Image Description: ${description}\n\n${
@@ -136,7 +141,7 @@ const Chatbot = () => {
     }
   };
 
-  // Handle sending messages
+  // Handle sending messages remains the same...
   const handleSend = async () => {
     if (!input.trim()) return;
 
@@ -161,6 +166,52 @@ const Chatbot = () => {
     }
   };
 
+  // Modified Message Component to handle image messages
+  const MessageBubble = ({ msg }) => {
+    if (msg.type === "image") {
+      return (
+        <div className={`flex items-end gap-2 mb-4 flex-row-reverse`}>
+          <div className="w-8 h-8 rounded-full flex items-center justify-center bg-slate-200">
+            <div className="w-4 h-4 rounded-full bg-slate-500"></div>
+          </div>
+          <div className="rounded-2xl overflow-hidden max-w-[80%] border border-gray-200">
+            <img 
+              src={msg.imageUrl} 
+              alt="Uploaded content" 
+              className="max-w-full h-auto max-h-[300px] object-contain"
+            />
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div
+        className={`flex items-end gap-2 mb-4 ${
+          msg.sender === "user" ? "flex-row-reverse" : "flex-row"
+        }`}
+      >
+        <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+          msg.sender === "user" ? "bg-slate-200" : "bg-gray-200"
+        }`}>
+          {msg.sender === "user" ? (
+            <div className="w-4 h-4 rounded-full bg-slate-500"></div>
+          ) : (
+            <Bot className="w-5 h-5 text-gray-500" />
+          )}
+        </div>
+        
+        <div className={`px-4 py-2 rounded-2xl max-w-[80%] ${
+          msg.sender === "user" 
+            ? "bg-slate-700 text-white rounded-tr-none" 
+            : "bg-gray-200 text-gray-800 rounded-tl-none"
+        }`}>
+          {msg.text}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-200 via-gray-300 to-slate-300 flex items-center justify-center p-6">
       {/* Floating Decorative Elements */}
@@ -169,7 +220,7 @@ const Chatbot = () => {
       
       {/* Main Container */}
       <div className="w-full max-w-3xl bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg overflow-hidden border border-gray-200">
-        {/* Header */}
+        {/* Header remains the same... */}
         <div className="bg-gradient-to-r from-gray-600 to-slate-600 p-6">
           <div className="flex items-center justify-center gap-2 mb-2">
             <Bot className="h-8 w-8 text-white opacity-90" />
@@ -180,38 +231,13 @@ const Chatbot = () => {
           </p>
         </div>
 
-        {/* Chat Area */}
+        {/* Modified Chat Area to use MessageBubble component */}
         <div className="h-96 overflow-y-auto p-6 bg-gradient-to-b from-gray-100/50 to-white/50">
           {messages.map((msg, index) => (
-            <div
-              key={index}
-              className={`flex items-end gap-2 mb-4 ${
-                msg.sender === "user" ? "flex-row-reverse" : "flex-row"
-              }`}
-            >
-              {/* Avatar */}
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                msg.sender === "user" ? "bg-slate-200" : "bg-gray-200"
-              }`}>
-                {msg.sender === "user" ? (
-                  <div className="w-4 h-4 rounded-full bg-slate-500"></div>
-                ) : (
-                  <Bot className="w-5 h-5 text-gray-500" />
-                )}
-              </div>
-              
-              {/* Message Bubble */}
-              <div className={`px-4 py-2 rounded-2xl max-w-[80%] ${
-                msg.sender === "user" 
-                  ? "bg-slate-700 text-white rounded-tr-none" 
-                  : "bg-gray-200 text-gray-800 rounded-tl-none"
-              }`}>
-                {msg.text}
-              </div>
-            </div>
+            <MessageBubble key={index} msg={msg} />
           ))}
 
-          {/* Typing Indicator */}
+          {/* Status indicators remain the same... */}
           {isTyping && (
             <div className="flex items-center gap-2 mb-4">
               <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center">
@@ -223,7 +249,6 @@ const Chatbot = () => {
             </div>
           )}
 
-          {/* Processing Image Indicator */}
           {isProcessingImage && (
             <div className="flex items-center justify-center mb-4">
               <div className="flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-500 rounded-full">
@@ -233,7 +258,6 @@ const Chatbot = () => {
             </div>
           )}
 
-          {/* Error Message */}
           {errorMessage && (
             <div className="flex items-center justify-center mb-4">
               <div className="flex items-center gap-2 px-4 py-2 bg-red-100 text-red-500 rounded-full">
@@ -244,10 +268,9 @@ const Chatbot = () => {
           )}
         </div>
 
-        {/* Input Area */}
+        {/* Input Area remains the same... */}
         <div className="p-4 border-t border-gray-200 bg-white/90">
           <div className="flex gap-2">
-            {/* Image Upload */}
             <label className="p-2 hover:bg-gray-100 rounded-full cursor-pointer">
               <input
                 type="file"
@@ -258,7 +281,6 @@ const Chatbot = () => {
               <Image className="w-5 h-5 text-gray-500" />
             </label>
 
-            {/* Speech Input */}
             <button
               onClick={toggleListening}
               className="p-2 hover:bg-gray-100 rounded-full"
@@ -270,7 +292,6 @@ const Chatbot = () => {
               )}
             </button>
 
-            {/* Text Input */}
             <input
               type="text"
               value={input}
@@ -284,7 +305,6 @@ const Chatbot = () => {
               placeholder="Type your message..."
             />
 
-            {/* Send Button */}
             <button
               onClick={handleSend}
               className="px-4 py-2 bg-gradient-to-r from-gray-600 to-slate-600 text-white rounded-full hover:opacity-90 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-gray-400"
