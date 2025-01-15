@@ -1,17 +1,142 @@
-import React, { useState } from "react";
-import { Send, Bot, Loader2, AlertCircle } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { Send, Bot, Loader2, AlertCircle, Image, Mic, MicOff } from "lucide-react";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import Tesseract from 'tesseract.js';
 
 const Chatbot = () => {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
+  const [isListening, setIsListening] = useState(false);
+  const [recognition, setRecognition] = useState(null);
+  const [isProcessingImage, setIsProcessingImage] = useState(false);
 
   // Initialize Gemini AI
-  const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+  const genAI = new GoogleGenerativeAI("AIzaSyDSfVp6iTI_-pBxJGhMHY1S9kXjAqubuKw");
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
 
+  // Initialize Speech Recognition
+  useEffect(() => {
+    if ('webkitSpeechRecognition' in window) {
+      const recognition = new webkitSpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        setInput(transcript);
+        setIsListening(false);
+      };
+
+      recognition.onerror = (event) => {
+        console.error('Speech recognition error:', event.error);
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      setRecognition(recognition);
+    }
+  }, []);
+
+  // Handle Speech Recognition
+  const toggleListening = () => {
+    if (!recognition) {
+      setErrorMessage("Speech recognition is not supported in your browser.");
+      return;
+    }
+
+    if (isListening) {
+      recognition.stop();
+    } else {
+      recognition.start();
+      setErrorMessage(null);
+    }
+    setIsListening(!isListening);
+  };
+
+  // Helper function to convert File to base64
+  const fileToGenerativePart = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64Data = reader.result.split(',')[1];
+        resolve({
+          inlineData: {
+            data: base64Data,
+            mimeType: file.type
+          }
+        });
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Enhanced Image Upload handler
+  const handleImageUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    setIsProcessingImage(true);
+    setErrorMessage(null);
+
+    try {
+      // Create a blob URL for the file
+      const imageUrl = URL.createObjectURL(file);
+      
+      // Convert image to base64 for Gemini
+      const base64Image = await fileToGenerativePart(file);
+      
+      // Get image description from Gemini
+      const result = await model.generateContent([
+        "Describe this image in detail. Include any text, objects, people, colors, and notable elements you can see.",
+        base64Image
+      ]);
+      
+      const description = await result.response.text();
+      
+      // Perform OCR
+      const ocrResult = await Tesseract.recognize(
+        imageUrl,
+        'eng',
+        {
+          logger: m => {
+            if (m.status === 'recognizing text') {
+              console.log(`${m.progress * 100}% complete`);
+            }
+          }
+        }
+      );
+
+      // Clean up the blob URL
+      URL.revokeObjectURL(imageUrl);
+
+      // Add both the description and any detected text to messages
+      const botMessage = {
+        sender: "bot",
+        text: `Image Description: ${description}\n\n${
+          ocrResult.data.text.trim() 
+            ? `Detected Text: ${ocrResult.data.text.trim()}`
+            : ''
+        }`
+      };
+      
+      setMessages(prev => [...prev, botMessage]);
+
+    } catch (error) {
+      console.error('Image Processing Error:', error);
+      setErrorMessage("Failed to process the image. Please try again.");
+    } finally {
+      setIsProcessingImage(false);
+    }
+  };
+
+  // Handle sending messages
   const handleSend = async () => {
     if (!input.trim()) return;
 
@@ -48,10 +173,10 @@ const Chatbot = () => {
         <div className="bg-gradient-to-r from-gray-600 to-slate-600 p-6">
           <div className="flex items-center justify-center gap-2 mb-2">
             <Bot className="h-8 w-8 text-white opacity-90" />
-            <h1 className="text-3xl font-bold text-white opacity-90">GeminiBot</h1>
+            <h1 className="text-3xl font-bold text-white opacity-90">ChikaBot</h1>
           </div>
           <p className="text-white/80 text-center text-sm">
-            Powered by Google Gemini AI
+            Powered by Google Gemini AI with Speech & Image Recognition
           </p>
         </div>
 
@@ -98,6 +223,16 @@ const Chatbot = () => {
             </div>
           )}
 
+          {/* Processing Image Indicator */}
+          {isProcessingImage && (
+            <div className="flex items-center justify-center mb-4">
+              <div className="flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-500 rounded-full">
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span className="text-sm">Processing image...</span>
+              </div>
+            </div>
+          )}
+
           {/* Error Message */}
           {errorMessage && (
             <div className="flex items-center justify-center mb-4">
@@ -112,6 +247,30 @@ const Chatbot = () => {
         {/* Input Area */}
         <div className="p-4 border-t border-gray-200 bg-white/90">
           <div className="flex gap-2">
+            {/* Image Upload */}
+            <label className="p-2 hover:bg-gray-100 rounded-full cursor-pointer">
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleImageUpload}
+                className="hidden"
+              />
+              <Image className="w-5 h-5 text-gray-500" />
+            </label>
+
+            {/* Speech Input */}
+            <button
+              onClick={toggleListening}
+              className="p-2 hover:bg-gray-100 rounded-full"
+            >
+              {isListening ? (
+                <MicOff className="w-5 h-5 text-red-500" />
+              ) : (
+                <Mic className="w-5 h-5 text-gray-500" />
+              )}
+            </button>
+
+            {/* Text Input */}
             <input
               type="text"
               value={input}
@@ -124,6 +283,8 @@ const Chatbot = () => {
               className="flex-1 px-4 py-2 rounded-full border border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-400 bg-white"
               placeholder="Type your message..."
             />
+
+            {/* Send Button */}
             <button
               onClick={handleSend}
               className="px-4 py-2 bg-gradient-to-r from-gray-600 to-slate-600 text-white rounded-full hover:opacity-90 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-gray-400"
