@@ -1,14 +1,16 @@
 import React, { useState } from "react";
-import axios from "axios";
 import { Send, Bot, Loader2, AlertCircle } from "lucide-react";
-
-const API_KEY = "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";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const Chatbot = () => {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
+
+  // Initialize Gemini AI
+  const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY);
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
   const handleSend = async () => {
     if (!input.trim()) return;
@@ -17,30 +19,19 @@ const Chatbot = () => {
     setMessages([...messages, userMessage]);
     setInput("");
     setIsTyping(true);
+    setErrorMessage(null);
 
     try {
-      const response = await axios.post(
-        "https://api-inference.huggingface.co/models/facebook/blenderbot-400M-distill",
-        {
-          inputs: input,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${API_KEY}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-
+      const result = await model.generateContent(input);
       const botMessage = {
         sender: "bot",
-        text: response.data[0]?.generated_text || "No response received.",
+        text: result.response.text(),
       };
       setMessages((prev) => [...prev, botMessage]);
-      setIsTyping(false);
     } catch (error) {
       console.error("Error:", error);
-      setErrorMessage("Sorry, something went wrong!");
+      setErrorMessage("Sorry, something went wrong! Please try again.");
+    } finally {
       setIsTyping(false);
     }
   };
@@ -57,10 +48,10 @@ const Chatbot = () => {
         <div className="bg-gradient-to-r from-gray-600 to-slate-600 p-6">
           <div className="flex items-center justify-center gap-2 mb-2">
             <Bot className="h-8 w-8 text-white opacity-90" />
-            <h1 className="text-3xl font-bold text-white opacity-90">ChikaBot</h1>
+            <h1 className="text-3xl font-bold text-white opacity-90">GeminiBot</h1>
           </div>
           <p className="text-white/80 text-center text-sm">
-            This is a chat-only bot. Type your message to get started.
+            Powered by Google Gemini AI
           </p>
         </div>
 
