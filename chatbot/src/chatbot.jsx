@@ -305,9 +305,23 @@ const EnhancedMealPlanner = () => {
   // In your generateMealPlan function, modify it to handle different durations:
   const generateMealPlan = async (prompt) => {
     try {
+      // Validate if the prompt is related to meal planning
+      const validKeywords = ['meal', 'diet', 'food', 'breakfast', 'lunch', 'dinner', 'plan', 'calories', 'nutrition'];
+      const isMealPlanRelated = validKeywords.some((keyword) =>
+        prompt.toLowerCase().includes(keyword)
+      );
+  
+      if (!isMealPlanRelated) {
+        throw new Error("The prompt is not related to meal planning. Please provide a relevant request.");
+      }
+  
+      // Determine the duration based on the prompt
       const duration = prompt.toLowerCase().includes('week') ? 7 : 1;
+  
+      // Generate the dates for the meal plan
       const dates = generateDates(selectedDate, duration);
-      
+  
+      // Enhance the prompt for better AI guidance
       let enhancedPrompt = prompt;
       if (duration > 1) {
         enhancedPrompt = `Create a ${duration}-day meal plan, clearly separated by days. For each day, include:\n` +
@@ -316,17 +330,18 @@ const EnhancedMealPlanner = () => {
           `- Dinner with calories and nutrients\n` +
           `Based on this request: ${prompt}`;
       }
-      
+  
+      // Generate content from the AI model
       const result = await model.generateContent(enhancedPrompt);
-      const response = result.response.text();
-      
-      // Save the meal plans for all generated dates
+      const response = await result.response.text();
+  
+      // Format and save the meal plans for the specified dates
       await formatAndSaveMealPlans(response, dates);
-      
-      return response;
+  
+      return response; // Return the AI-generated meal plan
     } catch (error) {
       console.error('Error generating meal plan:', error);
-      throw error;
+      throw new Error(error.message || 'Failed to generate a meal plan. Please try again.');
     }
   };
 
