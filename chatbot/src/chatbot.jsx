@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Send, Bot, Calendar, Mic, MicOff, Camera, Menu, Hash, X, ChevronRight, ChevronLeft, Plus } from 'lucide-react';
 import { formatRelative } from 'date-fns';
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { collection, addDoc, onSnapshot, query, orderBy, updateDoc, doc } from "firebase/firestore";
+import { collection, addDoc, onSnapshot, query, orderBy, updateDoc, doc, setDoc, getDoc } from "firebase/firestore";
 import { createWorker } from 'tesseract.js';
 import { db } from "./firebase";
 
@@ -22,13 +22,14 @@ const EnhancedMealPlanner = () => {
   const [isProcessingImage, setIsProcessingImage] = useState(false);
   const [showMealModal, setShowMealModal] = useState(false);
   const [selectedDayMeals, setSelectedDayMeals] = useState(null);
+  const [planDuration, setPlanDuration] = useState('day'); 
   
   const messageEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const fileInputRef = useRef(null);
 
   // Initialize Gemini AI
-  const genAI = new GoogleGenerativeAI("AIzaSyDSfVp6iTI_-pBxJGhMHY1S9kXjAqubuKw");
+  const genAI = new GoogleGenerativeAI("AIzaSyDBYiHd3rcaqmtoEoRciui0zEz0wK4Um88");
   const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
 
   // Initialize speech recognition
@@ -120,47 +121,84 @@ const EnhancedMealPlanner = () => {
     }
   };
 
+  const handleGenerate = async (prompt) => {
+    const userMessage = {
+      sender: 'user',
+      content: prompt,
+      timestamp: new Date().toISOString()
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setIsTyping(true);
+
+    try {
+      const response = await generateMealPlan(prompt);
+      const botMessage = {
+        sender: 'bot',
+        content: response,
+        timestamp: new Date().toISOString()
+      };
+
+      await saveMessage(userMessage);
+      await saveMessage(botMessage);
+
+      setMessages(prev => [...prev, botMessage]);
+    } catch (error) {
+      console.error('Error generating response:', error);
+      setErrorMessage('Failed to generate response. Please try again.');
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
   // Format meal plan from AI response
   const formatMealPlan = (response) => {
     const meals = {
-      breakfast: {},
-      lunch: {},
-      dinner: {},
-      snacks: {}
+        breakfast: { description: '', nutrients: '' },
+        lunch: { description: '', nutrients: '' },
+        dinner: { description: '', nutrients: '' }
     };
 
     try {
-      const lines = response.split('\n');
-      let currentMeal = null;
+        const days = response.split("**Day");
+        days.forEach(day => {
+            const lines = day.split('\n').filter(line => line.trim() !== '');
+            let currentMeal = null;
 
-      lines.forEach(line => {
-        if (line.toLowerCase().includes('breakfast:')) {
-          currentMeal = 'breakfast';
-          meals.breakfast.description = line.split(':')[1].trim();
-        } else if (line.toLowerCase().includes('lunch:')) {
-          currentMeal = 'lunch';
-          meals.lunch.description = line.split(':')[1].trim();
-        } else if (line.toLowerCase().includes('dinner:')) {
-          currentMeal = 'dinner';
-          meals.dinner.description = line.split(':')[1].trim();
-        } else if (line.toLowerCase().includes('snacks:')) {
-          currentMeal = 'snacks';
-          meals.snacks.description = line.split(':')[1].trim();
-        } else if (line.toLowerCase().includes('nutrients:') && currentMeal) {
-          meals[currentMeal].nutrients = line.split(':')[1].trim();
-        } else if (line.includes('cal)') && currentMeal) {
-          const calories = line.match(/\((\d+)\s*cal\)/);
-          if (calories) {
-            meals[currentMeal].calories = parseInt(calories[1]);
-          }
-        }
-      });
+            lines.forEach(line => {
+                line = line.trim();
+                if (line.startsWith('* **Breakfast')) {
+                    currentMeal = 'breakfast';
+                    meals.breakfast.description = line.split(':')[1].split('(')[0].trim();
+                    const nutrientInfo = line.match(/\(([^)]+)\)/);
+                    if (nutrientInfo) {
+                        meals.breakfast.nutrients = nutrientInfo[1];
+                    }
+                } else if (line.startsWith('* **Lunch')) {
+                    currentMeal = 'lunch';
+                    meals.lunch.description = line.split(':')[1].split('(')[0].trim();
+                    const nutrientInfo = line.match(/\(([^)]+)\)/);
+                    if (nutrientInfo) {
+                        meals.lunch.nutrients = nutrientInfo[1];
+                    }
+                } else if (line.startsWith('* **Dinner')) {
+                    currentMeal = 'dinner';
+                    meals.dinner.description = line.split(':')[1].split('(')[0].trim();
+                    const nutrientInfo = line.match(/\(([^)]+)\)/);
+                    if (nutrientInfo) {
+                        meals.dinner.nutrients = nutrientInfo[1];
+                    }
+                }
+            });
+        });
     } catch (error) {
-      console.error('Error parsing meal plan:', error);
+        console.error('Error parsing meal plan:', error);
     }
 
+    console.log("Formatted meals:", meals);
     return meals;
-  };
+};
+  
 
   // Save message to Firebase
   const saveMessage = async (message) => {
@@ -232,40 +270,45 @@ const EnhancedMealPlanner = () => {
     }
   };
 
-  // Generate meal plan
-  const generateMealPlan = async (query) => {
-    // Check if the query contains keywords relevant to meal plans
-    const relevantKeywords = ["meal", "diet", "breakfast", "lunch", "dinner", "calories", "nutrition", "protein", "carbs", "fats"];
-    const isRelevant = relevantKeywords.some(keyword => query.toLowerCase().includes(keyword));
-    
-    if (!isRelevant) {
-        return "Sorry, I can't help you with that.";
+  const generateDates = (startDate, duration) => {
+    const dates = [];
+    const start = new Date(startDate);
+    for (let i = 0; i < duration; i++) {
+      const date = new Date(start);
+      date.setDate(start.getDate() + i);
+      dates.push(date);
     }
+    return dates;
+  };
 
-    // If relevant, proceed with generating the prompt
-    const prompt = `Please create a detailed meal plan with the following guidelines:
-
-    Input: "${query}"
-
-    For each meal (Breakfast, Lunch, and Dinner), provide:
-    - Specific meal description
-    - Approximate calories
-    - Key nutrients (protein, carbs, fats)
-    - Separate each meal of the day with spaces.
-    
-    Format as:
-    Breakfast: [Meal] ([Calories] cal)
-    - Nutrients: [Protein/Carbs/Fats]
-    
-    Lunch: [Meal] ([Calories] cal)
-    - Nutrients: [Protein/Carbs/Fats]
-    
-    Dinner: [Meal] ([Calories] cal)
-    - Nutrients: [Protein/Carbs/Fats]`;
-
-    const result = await model.generateContent(prompt);
-    return result.response.text();
-};
+  // Generate meal plan
+  // In your generateMealPlan function, modify it to handle different durations:
+  const generateMealPlan = async (prompt) => {
+    try {
+      const duration = prompt.toLowerCase().includes('week') ? 7 : 1;
+      const dates = generateDates(selectedDate, duration);
+      
+      let enhancedPrompt = prompt;
+      if (duration > 1) {
+        enhancedPrompt = `Create a ${duration}-day meal plan, clearly separated by days. For each day, include:\n` +
+          `- Breakfast with calories and nutrients\n` +
+          `- Lunch with calories and nutrients\n` +
+          `- Dinner with calories and nutrients\n` +
+          `Based on this request: ${prompt}`;
+      }
+      
+      const result = await model.generateContent(enhancedPrompt);
+      const response = result.response.text();
+      
+      // Save the meal plans for all generated dates
+      await formatAndSaveMealPlans(response, dates);
+      
+      return response;
+    } catch (error) {
+      console.error('Error generating meal plan:', error);
+      throw error;
+    }
+  };
 
   // Save meal plan to calendar
   const saveMealPlanToCalendar = (structuredMeals) => {
@@ -275,8 +318,7 @@ const EnhancedMealPlanner = () => {
       completed: {
         breakfast: false,
         lunch: false,
-        dinner: false,
-        snacks: false
+        dinner: false
       }
     };
 
@@ -284,6 +326,51 @@ const EnhancedMealPlanner = () => {
       ...prev,
       [selectedDate.toISOString()]: mealPlanData
     }));
+  };
+
+  const formatAndSaveMealPlans = async (response, dates) => {
+    // Split the response into days if it's a multi-day plan
+    const dayPlans = response.split(/Day \d+:/g)
+      .filter(day => day.trim())
+      .map(day => day.trim());
+    
+    const newMealPlans = {};
+    
+    for (let i = 0; i < Math.min(dayPlans.length, dates.length); i++) {
+      const dayPlan = dayPlans[i];
+      const date = dates[i];
+      const dateString = date.toISOString();
+      
+      const structuredMeals = formatMealPlan(dayPlan);
+      
+      newMealPlans[dateString] = {
+        date: dateString,
+        meals: structuredMeals,
+        completed: {
+          breakfast: false,
+          lunch: false,
+          dinner: false
+        }
+      };
+      
+      // Save to Firebase with error handling
+      try {
+        const mealPlanRef = doc(db, "mealPlans", dateString);
+        await setDoc(mealPlanRef, newMealPlans[dateString]);
+      } catch (error) {
+        console.error("Error saving meal plan to Firebase:", error);
+        // Optionally set an error message for the user
+        setErrorMessage("Failed to save meal plan to database");
+      }
+    }
+    
+    // Update local state with all new meal plans
+    setMealPlans(prev => ({
+      ...prev,
+      ...newMealPlans
+    }));
+    console.log("Updated meal plans:", newMealPlans); 
+    return newMealPlans;
   };
 
   // Handle sending messages
@@ -312,9 +399,6 @@ const EnhancedMealPlanner = () => {
       await saveMessage(botMessage);
 
       setMessages(prev => [...prev, botMessage]);
-      
-      const structuredMeals = formatMealPlan(response);
-      saveMealPlanToCalendar(structuredMeals);
     } catch (error) {
       console.error('Error generating response:', error);
       setErrorMessage('Failed to generate response. Please try again.');
@@ -327,12 +411,62 @@ const EnhancedMealPlanner = () => {
   const MealDetailModal = ({ isOpen, onClose, meals, date }) => {
     if (!isOpen || !meals) return null;
 
-    const MealSection = ({ title, meal }) => {
+    const dateString = date.toISOString();
+    const [completionStatus, setCompletionStatus] = useState(
+      mealPlans[dateString]?.completed || {
+        breakfast: false,
+        lunch: false,
+        dinner: false
+      }
+    );
+
+    const handleCompletion = async (mealType) => {
+      const newStatus = {
+        ...completionStatus,
+        [mealType]: !completionStatus[mealType]
+      };
+      
+      setCompletionStatus(newStatus);
+      
+      // Update local state
+      setMealPlans(prev => ({
+        ...prev,
+        [dateString]: {
+          ...prev[dateString],
+          completed: newStatus
+        }
+      }));
+
+      // Update in Firebase
+      try {
+        const mealPlanRef = doc(db, "mealPlans", dateString);
+        await updateDoc(mealPlanRef, {
+          completed: newStatus
+        });
+      } catch (error) {
+        console.error("Error updating meal completion status:", error);
+      }
+    };
+
+    const MealSection = ({ title, meal, mealType }) => {
       if (!meal?.description) return null;
       
       return (
         <div className="mb-6">
-          <h3 className="text-lg font-semibold mb-2">{title}</h3>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-lg font-semibold">{title}</h3>
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-2 text-sm text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={completionStatus[mealType]}
+                  onChange={() => handleCompletion(mealType)}
+                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                Completed
+              </label>
+            </div>
+          </div>
           <div className="bg-gray-50 rounded-lg p-4">
             <p className="text-gray-800 mb-2">{meal.description}</p>
             {meal.calories && (
@@ -373,9 +507,7 @@ const EnhancedMealPlanner = () => {
               <MealSection title="Breakfast" meal={meals.breakfast} />
               <MealSection title="Lunch" meal={meals.lunch} />
               <MealSection title="Dinner" meal={meals.dinner} />
-              {meals.snacks?.description && (
-                <MealSection title="Snacks" meal={meals.snacks} />
-              )}
+        
             </div>
           </div>
         </div>
@@ -507,14 +639,12 @@ const CalendarView = () => {
   const getMealPlanSummary = (date) => {
     const dateString = date.toISOString();
     const plan = mealPlans[dateString];
+    
     if (!plan?.meals) return null;
 
-    const meals = [];
-    if (plan.meals.breakfast?.description) meals.push('BreakFast');
-    if (plan.meals.lunch?.description) meals.push('Lunch');
-    if (plan.meals.dinner?.description) meals.push('Dinner');
-
-    return meals;
+    return Object.entries(plan.meals)
+      .filter(([_, meal]) => meal.description)
+      .map(([type]) => type.charAt(0).toUpperCase() + type.slice(1));
   };
 
   const handleDayClick = (date) => {
@@ -654,7 +784,7 @@ return (
         >
           <Menu className="w-5 h-5" />
         </button>
-        <h1 className="text-xl font-bold">Meal Plan Assistant</h1>
+        <h1 className="text-xl font-bold">Mealy</h1>
         {errorMessage && (
           <div className="text-red-500 text-sm ml-auto">{errorMessage}</div>
         )}
