@@ -3,7 +3,6 @@ import { Send, Bot, Calendar, Mic, MicOff, Camera, Menu, Hash, X, ChevronRight, 
 import { formatRelative } from 'date-fns';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { collection, addDoc, onSnapshot, query, orderBy, updateDoc, doc, setDoc, getDoc } from "firebase/firestore";
-import { createWorker } from 'tesseract.js';
 import { db } from "./firebase";
 
 const EnhancedMealPlanner = () => {
@@ -81,21 +80,64 @@ const EnhancedMealPlanner = () => {
   }, [input]);
 
   // Toggle listening function
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  // Handle Enter key press
+  useEffect(() => {
+    const handleKeyPress = (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        handleSend();
+      }
+    };
+
+    document.addEventListener('keypress', handleKeyPress);
+    return () => document.removeEventListener('keypress', handleKeyPress);
+  }, [input]);
+
+  // Toggle listening function
   const toggleListening = () => {
     if (!('webkitSpeechRecognition' in window)) {
-      setErrorMessage('Speech recognition is not supported in your browser.');
-      return;
+        setErrorMessage('Speech recognition is not supported in your browser.');
+        return;
     }
 
+    const recognition = new window.webkitSpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    recognition.onresult = (event) => {
+        const transcript = Array.from(event.results)
+            .map(result => result[0])
+            .map(result => result.transcript)
+            .join('');
+        
+        setInput(transcript);
+    };
+
+    recognition.onerror = (event) => {
+        console.error('Speech recognition error:', event.error);
+        setIsListening(false);
+        setErrorMessage('Error with speech recognition. Please try again.');
+    };
+
+    recognition.onend = () => {
+        setIsListening(false);
+    };
+
     if (isListening) {
-      window.recognition.stop();
-      setIsListening(false);
+        recognition.stop();
+        setIsListening(false);
     } else {
-      window.recognition.start();
-      setIsListening(true);
-      setErrorMessage(null);
+        recognition.start();
+        setIsListening(true);
+        setErrorMessage(null);
     }
-  };
+};
 
   // Create new topic
   const createNewTopic = async () => {
@@ -240,54 +282,93 @@ const EnhancedMealPlanner = () => {
   const handleImageUpload = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
-
+  
     setIsProcessingImage(true);
     setErrorMessage(null);
-
+  
     try {
-      const worker = await createWorker();
-      await worker.loadLanguage('eng');
-      await worker.initialize('eng');
-      
+      // Convert file to base64 for Gemini
+      const base64Image = await fileToBase64(file);
       const imageUrl = URL.createObjectURL(file);
-      const { data: { text } } = await worker.recognize(imageUrl);
+  
+      // First, get a description of the image and any visible text
+      const imageDescriptionPrompt = "Describe this image in detail, focusing on any visible food, ingredients, recipes, or nutritional information. Include any text you can see in the image.";
       
-      await worker.terminate();
-
-      const prompt = `I have a food-related image with the following text: "${text}". 
-                     Can you identify any meals or recipes mentioned and create a structured meal plan from it?
-                     If possible, include nutritional estimates.`;
-
-      const response = await model.generateContent(prompt);
-      const mealPlanResponse = response.response.text();
-      
-      const imageMessage = {
+      const imageData = {
+        inlineData: {
+          data: base64Image,
+          mimeType: file.type
+        }
+      };
+  
+      // Generate image description using Gemini Pro Vision
+      const descriptionResult = await model.generateContent([imageDescriptionPrompt, imageData]);
+      const imageDescription = await descriptionResult.response.text();
+  
+      // Create prompt for meal plan based on image content
+      const mealPlanPrompt = `Based on this image content: "${imageDescription}"
+      Please create a structured meal plan. If you see specific meals or recipes, include those.
+      If you see ingredients, suggest meals that could be made with them.
+      Include estimated nutritional information where possible.
+      Format the response with clear sections for:
+      - Breakfast
+      - Lunch
+      - Dinner
+      Include calorie estimates and major nutrients if possible.`;
+  
+      // Generate meal plan response
+      const mealPlanResult = await model.generateContent(mealPlanPrompt);
+      const mealPlanResponse = mealPlanResult.response.text();
+  
+      // Create user image message
+      const userImageMessage = {
         sender: "user",
         type: "image",
+        imageUrl: imageUrl,
+        topic: currentTopic,
         content: imageUrl,
         timestamp: new Date().toISOString()
       };
-
+  
+      // Save user image message
+      await saveMessage(userImageMessage);
+      setMessages(prev => [...prev, userImageMessage]);
+  
+      // Create bot message with detected content and meal plan
       const botMessage = {
         sender: "bot",
+        text: "Image Analysis Results",
+        topic: currentTopic,
         content: mealPlanResponse,
         timestamp: new Date().toISOString()
       };
-
-      await saveMessage(imageMessage);
+  
+      // Save bot message
       await saveMessage(botMessage);
-      
-      setMessages(prev => [...prev, imageMessage, botMessage]);
-      
+      setMessages(prev => [...prev, botMessage]);
+  
+      // Format and save structured meals
       const structuredMeals = formatMealPlan(mealPlanResponse);
       saveMealPlanToCalendar(structuredMeals);
-
+  
     } catch (error) {
-      console.error("Error processing image:", error);
-      setErrorMessage("Error processing image. Please try again.");
+      console.error('Image Processing Error:', error);
+      setErrorMessage("Failed to process the image. Please try again.");
     } finally {
       setIsProcessingImage(false);
     }
+  };
+  const fileToBase64 = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => {
+        // Extract the base64 data from the result
+        const base64String = reader.result.split(',')[1];
+        resolve(base64String);
+      };
+      reader.onerror = (error) => reject(error);
+    });
   };
 
   const generateDates = (startDate, duration) => {
