@@ -33,32 +33,7 @@ const EnhancedMealPlanner = () => {
   const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
 
   // Initialize speech recognition
-  useEffect(() => {
-    if ('webkitSpeechRecognition' in window) {
-      const recognition = new window.webkitSpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      
-      recognition.onresult = (event) => {
-        const transcript = Array.from(event.results)
-          .map(result => result[0])
-          .map(result => result.transcript)
-          .join('');
-        
-        setInput(transcript);
-      };
-      
-      recognition.onerror = (event) => {
-        console.error('Speech recognition error:', event.error);
-        setIsListening(false);
-        setErrorMessage('Error with speech recognition. Please try again.');
-      };
-      
-      recognition.onend = () => {
-        setIsListening(false);
-      };
-    }
-  }, []);
+  
 
   // Auto-scroll effect
   useEffect(() => {
@@ -83,19 +58,42 @@ const EnhancedMealPlanner = () => {
   // Toggle listening function
   const toggleListening = () => {
     if (!('webkitSpeechRecognition' in window)) {
-      setErrorMessage('Speech recognition is not supported in your browser.');
-      return;
+        setErrorMessage('Speech recognition is not supported in your browser.');
+        return;
     }
 
+    const recognition = new window.webkitSpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    recognition.onresult = (event) => {
+        const transcript = Array.from(event.results)
+            .map(result => result[0])
+            .map(result => result.transcript)
+            .join('');
+        
+        setInput(transcript);
+    };
+
+    recognition.onerror = (event) => {
+        console.error('Speech recognition error:', event.error);
+        setIsListening(false);
+        setErrorMessage('Error with speech recognition. Please try again.');
+    };
+
+    recognition.onend = () => {
+        setIsListening(false);
+    };
+
     if (isListening) {
-      window.recognition.stop();
-      setIsListening(false);
+        recognition.stop();
+        setIsListening(false);
     } else {
-      window.recognition.start();
-      setIsListening(true);
-      setErrorMessage(null);
+        recognition.start();
+        setIsListening(true);
+        setErrorMessage(null);
     }
-  };
+};
 
   // Create new topic
   const createNewTopic = async () => {
@@ -225,50 +223,52 @@ const EnhancedMealPlanner = () => {
     setErrorMessage(null);
 
     try {
-      const worker = await createWorker();
-      await worker.loadLanguage('eng');
-      await worker.initialize('eng');
-      
-      const imageUrl = URL.createObjectURL(file);
-      const { data: { text } } = await worker.recognize(imageUrl);
-      
-      await worker.terminate();
+        // Create a new worker
+        const worker = await createWorker();
 
-      const prompt = `I have a food-related image with the following text: "${text}". 
-                     Can you identify any meals or recipes mentioned and create a structured meal plan from it?
-                     If possible, include nutritional estimates.`;
+        // Initialize the worker with the language
+        await worker.initialize('eng'); // No need to load language separately
 
-      const response = await model.generateContent(prompt);
-      const mealPlanResponse = response.response.text();
-      
-      const imageMessage = {
-        sender: "user",
-        type: "image",
-        content: imageUrl,
-        timestamp: new Date().toISOString()
-      };
+        const imageUrl = URL.createObjectURL(file);
+        const { data: { text } } = await worker.recognize(imageUrl);
+        
+        await worker.terminate(); // Terminate the worker after use
 
-      const botMessage = {
-        sender: "bot",
-        content: mealPlanResponse,
-        timestamp: new Date().toISOString()
-      };
+        const prompt = `I have a food-related image with the following text: "${text}". 
+                        Can you identify any meals or recipes mentioned and create a structured meal plan from it?
+                        If possible, include nutritional estimates.`;
 
-      await saveMessage(imageMessage);
-      await saveMessage(botMessage);
-      
-      setMessages(prev => [...prev, imageMessage, botMessage]);
-      
-      const structuredMeals = formatMealPlan(mealPlanResponse);
-      saveMealPlanToCalendar(structuredMeals);
+        const response = await model.generateContent(prompt);
+        const mealPlanResponse = response.response.text();
+        
+        const imageMessage = {
+            sender: "user",
+            type: "image",
+            content: imageUrl,
+            timestamp: new Date().toISOString()
+        };
+
+        const botMessage = {
+            sender: "bot",
+            content: mealPlanResponse,
+            timestamp: new Date().toISOString()
+        };
+
+        await saveMessage(imageMessage);
+        await saveMessage(botMessage);
+        
+        setMessages(prev => [...prev, imageMessage, botMessage]);
+        
+        const structuredMeals = formatMealPlan(mealPlanResponse);
+        saveMealPlanToCalendar(structuredMeals);
 
     } catch (error) {
-      console.error("Error processing image:", error);
-      setErrorMessage("Error processing image. Please try again.");
+        console.error("Error processing image:", error);
+        setErrorMessage("Error processing image. Please try again.");
     } finally {
-      setIsProcessingImage(false);
+        setIsProcessingImage(false);
     }
-  };
+};
 
   const generateDates = (startDate, duration) => {
     const dates = [];
