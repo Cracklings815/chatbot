@@ -160,45 +160,65 @@ const EnhancedMealPlanner = () => {
     };
 
     try {
-        const days = response.split("**Day");
-        days.forEach(day => {
-            const lines = day.split('\n').filter(line => line.trim() !== '');
-            let currentMeal = null;
+        // Split by meal markers
+        const lines = response.split('\n');
+        let currentMeal = null;
 
-            lines.forEach(line => {
-                line = line.trim();
-                if (line.startsWith('* **Breakfast')) {
-                    currentMeal = 'breakfast';
-                    meals.breakfast.description = line.split(':')[1].split('(')[0].trim();
-                    const nutrientInfo = line.match(/\(([^)]+)\)/);
-                    if (nutrientInfo) {
-                        meals.breakfast.nutrients = nutrientInfo[1];
-                    }
-                } else if (line.startsWith('* **Lunch')) {
-                    currentMeal = 'lunch';
-                    meals.lunch.description = line.split(':')[1].split('(')[0].trim();
-                    const nutrientInfo = line.match(/\(([^)]+)\)/);
-                    if (nutrientInfo) {
-                        meals.lunch.nutrients = nutrientInfo[1];
-                    }
-                } else if (line.startsWith('* **Dinner')) {
-                    currentMeal = 'dinner';
-                    meals.dinner.description = line.split(':')[1].split('(')[0].trim();
-                    const nutrientInfo = line.match(/\(([^)]+)\)/);
-                    if (nutrientInfo) {
-                        meals.dinner.nutrients = nutrientInfo[1];
+        lines.forEach(line => {
+            line = line.trim();
+            
+            // Check for meal headers with more flexible matching
+            if (line.toLowerCase().includes('breakfast')) {
+                currentMeal = 'breakfast';
+                const [_, ...description] = line.split(':');
+                if (description.length > 0) {
+                    const [mealDesc, ...nutrients] = description.join(':').split('(');
+                    meals.breakfast.description = mealDesc.trim();
+                    if (nutrients.length > 0) {
+                        meals.breakfast.nutrients = nutrients.join('(').replace(/\)$/, '').trim();
                     }
                 }
-            });
+            } else if (line.toLowerCase().includes('lunch')) {
+                currentMeal = 'lunch';
+                const [_, ...description] = line.split(':');
+                if (description.length > 0) {
+                    const [mealDesc, ...nutrients] = description.join(':').split('(');
+                    meals.lunch.description = mealDesc.trim();
+                    if (nutrients.length > 0) {
+                        meals.lunch.nutrients = nutrients.join('(').replace(/\)$/, '').trim();
+                    }
+                }
+            } else if (line.toLowerCase().includes('dinner')) {
+                currentMeal = 'dinner';
+                const [_, ...description] = line.split(':');
+                if (description.length > 0) {
+                    const [mealDesc, ...nutrients] = description.join(':').split('(');
+                    meals.dinner.description = mealDesc.trim();
+                    if (nutrients.length > 0) {
+                        meals.dinner.nutrients = nutrients.join('(').replace(/\)$/, '').trim();
+                    }
+                }
+            } else if (currentMeal && line.length > 0 && !line.startsWith('*') && !line.startsWith('#')) {
+                // Append additional details to current meal description
+                meals[currentMeal].description += ' ' + line.trim();
+            }
         });
     } catch (error) {
         console.error('Error parsing meal plan:', error);
     }
 
+    // Clean up descriptions by removing markdown symbols and extra spaces
+    Object.keys(meals).forEach(meal => {
+        meals[meal].description = meals[meal].description
+            .replace(/\*/g, '')
+            .replace(/#+/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+    });
+
     console.log("Formatted meals:", meals);
     return meals;
 };
-  
 
   // Save message to Firebase
   const saveMessage = async (message) => {
@@ -412,41 +432,6 @@ const EnhancedMealPlanner = () => {
     if (!isOpen || !meals) return null;
 
     const dateString = date.toISOString();
-    const [completionStatus, setCompletionStatus] = useState(
-      mealPlans[dateString]?.completed || {
-        breakfast: false,
-        lunch: false,
-        dinner: false
-      }
-    );
-
-    const handleCompletion = async (mealType) => {
-      const newStatus = {
-        ...completionStatus,
-        [mealType]: !completionStatus[mealType]
-      };
-      
-      setCompletionStatus(newStatus);
-      
-      // Update local state
-      setMealPlans(prev => ({
-        ...prev,
-        [dateString]: {
-          ...prev[dateString],
-          completed: newStatus
-        }
-      }));
-
-      // Update in Firebase
-      try {
-        const mealPlanRef = doc(db, "mealPlans", dateString);
-        await updateDoc(mealPlanRef, {
-          completed: newStatus
-        });
-      } catch (error) {
-        console.error("Error updating meal completion status:", error);
-      }
-    };
 
     const MealSection = ({ title, meal, mealType }) => {
       if (!meal?.description) return null;
@@ -455,17 +440,6 @@ const EnhancedMealPlanner = () => {
         <div className="mb-6">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-lg font-semibold">{title}</h3>
-            <div className="flex items-center gap-2">
-              <label className="flex items-center gap-2 text-sm text-gray-600">
-                <input
-                  type="checkbox"
-                  checked={completionStatus[mealType]}
-                  onChange={() => handleCompletion(mealType)}
-                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                />
-                Completed
-              </label>
-            </div>
           </div>
           <div className="bg-gray-50 rounded-lg p-4">
             <p className="text-gray-800 mb-2">{meal.description}</p>
@@ -504,10 +478,9 @@ const EnhancedMealPlanner = () => {
             </div>
 
             <div className="mt-4">
-              <MealSection title="Breakfast" meal={meals.breakfast} />
-              <MealSection title="Lunch" meal={meals.lunch} />
-              <MealSection title="Dinner" meal={meals.dinner} />
-        
+              <MealSection title="Breakfast" meal={meals.breakfast} mealType="breakfast" />
+              <MealSection title="Lunch" meal={meals.lunch} mealType="lunch" />
+              <MealSection title="Dinner" meal={meals.dinner} mealType="dinner" />
             </div>
           </div>
         </div>
