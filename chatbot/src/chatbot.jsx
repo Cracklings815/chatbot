@@ -2,8 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Send, Bot, Calendar, Mic, MicOff, Camera, Menu, Hash, X, ChevronRight, ChevronLeft, Plus, MessageSquare } from 'lucide-react';
 import { formatRelative } from 'date-fns';
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { collection, addDoc, onSnapshot, query, orderBy, updateDoc, doc, setDoc, getDoc } from "firebase/firestore";
-import { createWorker } from 'tesseract.js';
+import { collection, addDoc, onSnapshot, query, orderBy, updateDoc, doc, setDoc, getDoc, serverTimestamp, where} from "firebase/firestore";
 import { db } from "./firebase";
 
 const EnhancedMealPlanner = () => {
@@ -26,45 +25,90 @@ const EnhancedMealPlanner = () => {
   const [chatHistory, setChatHistory] = useState([]);
   const [currentChat, setCurrentChat] = useState(null);
   
+  
   const messageEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const fileInputRef = useRef(null);
+  const sidebarRef = useRef(null);
 
   // Initialize Gemini AI
   const genAI = new GoogleGenerativeAI("AIzaSyDBYiHd3rcaqmtoEoRciui0zEz0wK4Um88");
   const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
 
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (sidebarRef.current && !sidebarRef.current.contains(event.target)) {
+        setHistoryVisible(false);
+      }
+    };
+
+    if (historyVisible) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [historyVisible]);
+
 
   useEffect(() => {
-    const mealPlansRef = collection(db, "mealPlans");
-    const unsubscribe = onSnapshot(mealPlansRef, (snapshot) => {
-      const plans = {};
-      snapshot.forEach((doc) => {
-        plans[doc.id] = doc.data();
-      });
-      setMealPlans(plans);
-    });
-
-    return () => unsubscribe();
+    const loadChatHistory = async () => {
+      try {
+        const q = query(collection(db, "chats"), orderBy("createdAt", "desc"));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+          const chats = [];
+          snapshot.forEach((doc) => {
+            chats.push({ id: doc.id, ...doc.data() });
+          });
+          setChatHistory(chats);
+          
+          // If no current chat is selected and we have chats, select the most recent one
+          if (!currentChat && chats.length > 0) {
+            setCurrentChat(chats[0].id);
+          }
+        });
+        return unsubscribe;
+      } catch (error) {
+        console.error("Error loading chat history:", error);
+        setErrorMessage("Failed to load chat history.");
+      }
+    };
+    loadChatHistory();
   }, []);
 
 
-  // Initialize speech recognition
+
   const createNewChat = async () => {
     try {
       const newChat = {
-        name: `Chat ${new Date().toLocaleString()}`,
-        createdAt: new Date().toISOString(),
-        type: 'chat'
+        name: `Meal Plan ${new Date().toLocaleString()}`,
+        createdAt: serverTimestamp(),
+        lastMessage: null,
+        messageCount: 0
       };
 
       const docRef = await addDoc(collection(db, "chats"), newChat);
+      
+      // After successful creation, switch to the new chat
       setCurrentChat(docRef.id);
-      setMessages([]); // Clear current messages
-      setHistoryVisible(false); // Close sidebar after creating new chat
+      setMessages([]);
+      setMealPlans({});
+      setHistoryVisible(false);
+      
+      // Add welcome message
+      const welcomeMessage = {
+        sender: 'bot',
+        content: "Hello! I'm ready to help you create a new meal plan. What kind of meals are you looking for?",
+        timestamp: new Date().toISOString(),
+        chatId: docRef.id
+      };
+      
+      await saveMessage(welcomeMessage);
+      
     } catch (error) {
       console.error("Error creating new chat:", error);
-      setErrorMessage("Failed to create new chat");
+      setErrorMessage("Failed to create new chat.");
     }
   };
   // Auto-scroll effect
@@ -232,20 +276,35 @@ const EnhancedMealPlanner = () => {
 
   // Save message to Firebase
   const saveMessage = async (message) => {
-    try {
-      const messageData = {
-        ...message,
-        topicId: currentTopic,
-        createdAt: new Date().toISOString()
-      };
+    if (!currentChat) return;
 
-      await addDoc(collection(db, "messages"), messageData);
+    const messageData = {
+      ...message,
+      chatId: currentChat,
+      createdAt: new Date().toISOString()
+    };
+
+    try {
+      // Add message to Firebase
+      const docRef = await addDoc(collection(db, "messages"), messageData);
+      
+      // Update chat's last message and message count
+      const chatRef = doc(db, "chats", currentChat);
+      await updateDoc(chatRef, {
+        lastMessage: messageData.content,
+        messageCount: (messages.length || 0) + 1
+      });
+
+      return docRef.id;
     } catch (error) {
       console.error("Error saving message:", error);
-      setErrorMessage("Failed to save message");
+      setErrorMessage("Failed to save message. Operating in offline mode.");
+      
+      // Fallback: Update local state only
+      setMessages(prev => [...prev, { ...messageData, id: `local-${Date.now()}` }]);
+      return null;
     }
   };
-
   // Handle image upload
   const handleImageUpload = async (event) => {
     const file = event.target.files[0];
@@ -381,6 +440,27 @@ const EnhancedMealPlanner = () => {
     }
   };
 
+  const formatChatDate = (timestamp) => {
+    if (!timestamp) return 'Just now';
+
+    try {
+        // Handle Firestore Timestamp
+        if (timestamp?.toDate) {
+            return formatRelative(timestamp.toDate(), new Date());
+        }
+
+        // Handle ISO string or other date formats
+        const date = new Date(timestamp);
+        if (isNaN(date.getTime())) {
+            return 'Just now';
+        }
+        return formatRelative(date, new Date());
+    } catch (error) {
+        console.error('Error formatting date:', error);
+        return 'Just now';
+    }
+};
+
   // Save meal plan to calendar
   const saveMealPlanToCalendar = (structuredMeals) => {
     const mealPlanData = {
@@ -400,6 +480,7 @@ const EnhancedMealPlanner = () => {
   };
 
   const formatAndSaveMealPlans = async (response, dates) => {
+    // Split the response into days if it's a multi-day plan
     const dayPlans = response.split(/Day \d+:/g)
       .filter(day => day.trim())
       .map(day => day.trim());
@@ -408,8 +489,7 @@ const EnhancedMealPlanner = () => {
     
     for (let i = 0; i < Math.min(dayPlans.length, dates.length); i++) {
       const dayPlan = dayPlans[i];
-      const date = new Date(dates[i]);
-      date.setHours(0, 0, 0, 0);
+      const date = dates[i];
       const dateString = date.toISOString();
       
       const structuredMeals = formatMealPlan(dayPlan);
@@ -424,18 +504,25 @@ const EnhancedMealPlanner = () => {
         }
       };
       
+      // Save to Firebase with error handling
       try {
         const mealPlanRef = doc(db, "mealPlans", dateString);
         await setDoc(mealPlanRef, newMealPlans[dateString]);
       } catch (error) {
         console.error("Error saving meal plan to Firebase:", error);
+        // Optionally set an error message for the user
         setErrorMessage("Failed to save meal plan to database");
       }
     }
     
+    // Update local state with all new meal plans
+    setMealPlans(prev => ({
+      ...prev,
+      ...newMealPlans
+    }));
+    console.log("Updated meal plans:", newMealPlans); 
     return newMealPlans;
   };
-
 
   // Handle sending messages
   const handleSend = async () => {
@@ -443,29 +530,29 @@ const EnhancedMealPlanner = () => {
 
     const userMessage = {
       sender: 'user',
-      content: input,
+      content: input.trim(),
       timestamp: new Date().toISOString()
     };
 
-    setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsTyping(true);
 
     try {
-      const response = await generateMealPlan(input);
+      // Save user message
+      await saveMessage(userMessage);
+
+      // Generate and save bot response
+      const response = await generateMealPlan(userMessage.content);
       const botMessage = {
         sender: 'bot',
         content: response,
         timestamp: new Date().toISOString()
       };
 
-      await saveMessage(userMessage);
       await saveMessage(botMessage);
-
-      setMessages(prev => [...prev, botMessage]);
     } catch (error) {
-      console.error('Error generating response:', error);
-      setErrorMessage('Failed to generate response. Please try again.');
+      console.error('Error in message handling:', error);
+      setErrorMessage('Failed to process message. Some content may be missing.');
     } finally {
       setIsTyping(false);
     }
@@ -484,6 +571,7 @@ const EnhancedMealPlanner = () => {
       }
     );
 
+    
     const handleCompletion = async (mealType) => {
       const newStatus = {
         ...completionStatus,
@@ -584,70 +672,53 @@ const EnhancedMealPlanner = () => {
     if (!historyVisible) return null;
 
     return (
-      <div className="fixed inset-0 z-30 flex">
-        {/* Backdrop overlay */}
-        <div 
-          className="absolute inset-0 bg-black/20" 
-          onClick={onClose}
-        />
-
-        {/* Sidebar content */}
-        <div className="relative w-80 max-w-[calc(100%-3rem)] bg-white shadow-xl animate-in slide-in-from-left">
-          <div className="p-4 flex flex-col h-full">
-            {/* Header */}
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold">Chat History</h2>
-              <button 
+        <div className="fixed inset-0 z-30 flex">
+            <div 
+                className="absolute inset-0 bg-black/20" 
                 onClick={onClose}
-                className="p-2 hover:bg-gray-100 rounded-lg"
-                aria-label="Close sidebar"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* New Chat Button */}
-            <button
-              onClick={createNewChat}
-              className="flex items-center gap-2 px-4 py-3 mb-4 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              New Chat
-            </button>
-
-            {/* Chat History */}
-            <div className="flex-1 overflow-y-auto">
-              {chatHistory.map((chat) => (
-                <button
-                  key={chat.id}
-                  onClick={() => {
-                    setCurrentChat(chat.id);
-                    setHistoryVisible(false);
-                  }}
-                  className={`w-full px-4 py-3 text-left flex items-center gap-3 rounded-lg transition-colors ${
-                    currentChat === chat.id 
-                      ? 'bg-blue-50 text-blue-600' 
-                      : 'text-gray-700 hover:bg-gray-100'
-                  }`}
-                >
-                  <MessageSquare className="w-4 h-4" />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium truncate">{chat.name}</div>
-                    <div className="text-xs text-gray-500">
-                      {formatRelative(new Date(chat.createdAt), new Date())}
+            />
+            <div className="relative w-80 max-w-[calc(100%-3rem)] bg-white shadow-xl animate-in slide-in-from-left">
+                <div className="p-4 flex flex-col h-full">
+                    <div className="flex items-center justify-between mb-6">
+                        <h2 className="text-xl font-semibold">Chat History</h2>
+                        <button 
+                            onClick={onClose}
+                            className="p-2 hover:bg-gray-100 rounded-lg"
+                            aria-label="Close sidebar"
+                        >
+                            <X className="w-5 h-5" />
+                        </button>
                     </div>
-                  </div>
-                  {currentChat === chat.id && (
-                    <ChevronRight className="w-4 h-4 flex-shrink-0" />
-                  )}
-                </button>
-              ))}
+                    <div className="flex-1 overflow-y-auto">
+                        {chatHistory.map((chat) => (
+                            <button
+                                key={chat.id}
+                                onClick={() => {
+                                    setCurrentChat(chat.id);
+                                    setHistoryVisible(false);
+                                }}
+                                className={`w-full px-4 py-3 text-left flex items-center gap-3 rounded-lg transition-colors ${
+                                    currentChat === chat.id 
+                                        ? 'bg-blue-50 text-blue-600' 
+                                        : 'text-gray-700 hover:bg-gray-100'
+                                }`}
+                            >
+                                <MessageSquare className="w-4 h-4" />
+                                <div className="flex-1 min-w-0">
+                                    <div className="font-medium truncate">{chat.name}</div>
+                                    <div className="text-xs text-gray-500">
+                                        {formatChatDate(chat.createdAt)} {/* Use the formatChatDate function here */}
+                                    </div>
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                </div>
             </div>
-          </div>
         </div>
-      </div>
     );
-  };
+};
+
 // Calendar View Component
 const CalendarView = () => {
   const daysInWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -681,9 +752,7 @@ const CalendarView = () => {
   };
 
   const getMealPlanSummary = (date) => {
-    const normalizedDate = new Date(date);
-    normalizedDate.setHours(0, 0, 0, 0);
-    const dateString = normalizedDate.toISOString();
+    const dateString = date.toISOString();
     const plan = mealPlans[dateString];
     
     if (!plan?.meals) return null;
@@ -695,16 +764,8 @@ const CalendarView = () => {
 
   const handleDayClick = (date) => {
     setSelectedDate(date);
-    // Normalize the date to midnight UTC to avoid timezone issues
-    const normalizedDate = new Date(date);
-    normalizedDate.setHours(0, 0, 0, 0);
-    const dateString = normalizedDate.toISOString();
-    
-    console.log("Clicked date:", dateString);
-    console.log("Available meal plans:", mealPlans);
-    
+    const dateString = date.toISOString();
     const dayMeals = mealPlans[dateString]?.meals;
-    console.log("Found meals for date:", dayMeals);
     
     if (dayMeals) {
       setSelectedDayMeals(dayMeals);
@@ -841,7 +902,7 @@ const MessageBubble = ({ message }) => (
 
 return (
   <div className="flex h-screen bg-gray-100">
-    <Sidebar />
+    <Sidebar onClose={() => setHistoryVisible(false)} />
     
     <div className="flex-1 flex flex-col">
       <div className="p-4 border-b bg-white flex items-center gap-4">
@@ -856,15 +917,6 @@ return (
           <div className="text-red-500 text-sm ml-auto">{errorMessage}</div>
         )}
       </div>
-      <MealDetailModal
-      isOpen={showMealModal}
-      onClose={() => {
-        setShowMealModal(false);
-        setSelectedDayMeals(null);
-      }}
-      meals={selectedDayMeals}
-      date={selectedDate}
-    />
 
       <div className="flex-1 flex gap-6 p-6">
         {/* Chat section */}
