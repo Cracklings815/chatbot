@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Bot, Calendar, Mic, MicOff, Camera, Menu, Hash, X, ChevronRight, ChevronLeft, Plus } from 'lucide-react';
+import { Send, Bot, Calendar, Mic, MicOff, Camera, Menu, Hash, X, ChevronRight, ChevronLeft, Plus, MessageSquare } from 'lucide-react';
 import { formatRelative } from 'date-fns';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { collection, addDoc, onSnapshot, query, orderBy, updateDoc, doc, setDoc, getDoc } from "firebase/firestore";
@@ -23,6 +23,8 @@ const EnhancedMealPlanner = () => {
   const [showMealModal, setShowMealModal] = useState(false);
   const [selectedDayMeals, setSelectedDayMeals] = useState(null);
   const [planDuration, setPlanDuration] = useState('day'); 
+  const [chatHistory, setChatHistory] = useState([]);
+  const [currentChat, setCurrentChat] = useState(null);
   
   const messageEndRef = useRef(null);
   const chatContainerRef = useRef(null);
@@ -32,8 +34,98 @@ const EnhancedMealPlanner = () => {
   const genAI = new GoogleGenerativeAI("AIzaSyDBYiHd3rcaqmtoEoRciui0zEz0wK4Um88");
   const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
 
+  useEffect(() => {
+    const loadChatHistory = async () => {
+      try {
+        const q = query(
+          collection(db, "chats"), 
+          orderBy("createdAt", "desc")
+        );
+        
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+          const chats = [];
+          snapshot.forEach((doc) => {
+            chats.push({ id: doc.id, ...doc.data() });
+          });
+          setChatHistory(chats);
+          
+          // If no current chat is selected and we have chats, select the most recent one
+          if (!currentChat && chats.length > 0) {
+            setCurrentChat(chats[0].id);
+          }
+        }, (error) => {
+          console.error("Error loading chat history:", error);
+          setErrorMessage("Failed to load chat history. Operating in offline mode.");
+        });
+
+        return unsubscribe;
+      } catch (error) {
+        console.error("Error setting up chat history listener:", error);
+        setErrorMessage("Failed to connect to the database. Operating in offline mode.");
+      }
+    };
+
+    loadChatHistory();
+  }, []);
+
+  useEffect(() => {
+    if (!currentChat) return;
+
+    const loadMessages = async () => {
+      try {
+        const q = query(
+          collection(db, "messages"),
+          where("chatId", "==", currentChat),
+          orderBy("timestamp", "asc")
+        );
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+          const newMessages = [];
+          snapshot.forEach((doc) => {
+            newMessages.push({ id: doc.id, ...doc.data() });
+          });
+          setMessages(newMessages);
+        }, (error) => {
+          console.error("Error loading messages:", error);
+          setErrorMessage("Failed to load messages. Some messages may be missing.");
+        });
+
+        return unsubscribe;
+      } catch (error) {
+        console.error("Error setting up messages listener:", error);
+        setErrorMessage("Failed to load messages. Operating in offline mode.");
+      }
+    };
+
+    loadMessages();
+  }, [currentChat]);
+
+
   // Initialize speech recognition
-  
+  const createNewChat = async () => {
+    try {
+      const newChat = {
+        name: `Chat ${new Date().toLocaleString()}`,
+        createdAt: new Date().toISOString(),
+        type: 'chat'
+      };
+
+      const docRef = await addDoc(collection(db, "chats"), newChat);
+      
+      // Update current chat and clear messages
+      setCurrentChat(docRef.id);
+      setMessages([]);
+      
+      // Close the sidebar after a short delay to ensure smooth transition
+      setTimeout(() => {
+        setHistoryVisible(false);
+      }, 100);
+      
+    } catch (error) {
+      console.error("Error creating new chat:", error);
+      setErrorMessage("Failed to create new chat");
+    }
+  };
 
   // Auto-scroll effect
   useEffect(() => {
@@ -200,75 +292,129 @@ const EnhancedMealPlanner = () => {
 
   // Save message to Firebase
   const saveMessage = async (message) => {
-    try {
-      const messageData = {
-        ...message,
-        topicId: currentTopic,
-        createdAt: new Date().toISOString()
-      };
+    if (!currentChat) return;
 
-      await addDoc(collection(db, "messages"), messageData);
+    const messageData = {
+      ...message,
+      chatId: currentChat,
+      createdAt: new Date().toISOString()
+    };
+
+    try {
+      // Add message to Firebase
+      const docRef = await addDoc(collection(db, "messages"), messageData);
+      
+      // Update chat's last message and message count
+      const chatRef = doc(db, "chats", currentChat);
+      await updateDoc(chatRef, {
+        lastMessage: messageData.content,
+        messageCount: (messages.length || 0) + 1
+      });
+
+      return docRef.id;
     } catch (error) {
       console.error("Error saving message:", error);
-      setErrorMessage("Failed to save message");
+      setErrorMessage("Failed to save message. Operating in offline mode.");
+      
+      // Fallback: Update local state only
+      setMessages(prev => [...prev, { ...messageData, id: `local-${Date.now()}` }]);
+      return null;
     }
   };
-
   // Handle image upload
   const handleImageUpload = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
-
+  
     setIsProcessingImage(true);
     setErrorMessage(null);
-
+  
     try {
-        // Create a new worker
-        const worker = await createWorker();
-
-        // Initialize the worker with the language
-        await worker.initialize('eng'); // No need to load language separately
-
-        const imageUrl = URL.createObjectURL(file);
-        const { data: { text } } = await worker.recognize(imageUrl);
-        
-        await worker.terminate(); // Terminate the worker after use
-
-        const prompt = `I have a food-related image with the following text: "${text}". 
-                        Can you identify any meals or recipes mentioned and create a structured meal plan from it?
-                        If possible, include nutritional estimates.`;
-
-        const response = await model.generateContent(prompt);
-        const mealPlanResponse = response.response.text();
-        
-        const imageMessage = {
-            sender: "user",
-            type: "image",
-            content: imageUrl,
-            timestamp: new Date().toISOString()
-        };
-
-        const botMessage = {
-            sender: "bot",
-            content: mealPlanResponse,
-            timestamp: new Date().toISOString()
-        };
-
-        await saveMessage(imageMessage);
-        await saveMessage(botMessage);
-        
-        setMessages(prev => [...prev, imageMessage, botMessage]);
-        
-        const structuredMeals = formatMealPlan(mealPlanResponse);
-        saveMealPlanToCalendar(structuredMeals);
-
+      // Convert file to base64 for Gemini
+      const base64Image = await fileToBase64(file);
+      const imageUrl = URL.createObjectURL(file);
+  
+      // First, get a description of the image and any visible text
+      const imageDescriptionPrompt = "Describe this image in detail, focusing on any visible food, ingredients, recipes, or nutritional information. Include any text you can see in the image.";
+      
+      const imageData = {
+        inlineData: {
+          data: base64Image,
+          mimeType: file.type
+        }
+      };
+  
+      // Generate image description using Gemini Pro Vision
+      const descriptionResult = await model.generateContent([imageDescriptionPrompt, imageData]);
+      const imageDescription = await descriptionResult.response.text();
+  
+      // Create prompt for meal plan based on image content
+      const mealPlanPrompt = `Based on this image content: "${imageDescription}"
+      Please create a structured meal plan. If you see specific meals or recipes, include those.
+      If you see ingredients, suggest meals that could be made with them.
+      Include estimated nutritional information where possible.
+      Format the response with clear sections for:
+      - Breakfast
+      - Lunch
+      - Dinner
+      Include calorie estimates and major nutrients if possible.`;
+  
+      // Generate meal plan response
+      const mealPlanResult = await model.generateContent(mealPlanPrompt);
+      const mealPlanResponse = mealPlanResult.response.text();
+  
+      // Create user image message
+      const userImageMessage = {
+        sender: "user",
+        type: "image",
+        imageUrl: imageUrl,
+        topic: currentTopic,
+        content: imageUrl,
+        timestamp: new Date().toISOString()
+      };
+  
+      // Save user image message
+      await saveMessage(userImageMessage);
+      setMessages(prev => [...prev, userImageMessage]);
+  
+      // Create bot message with detected content and meal plan
+      const botMessage = {
+        sender: "bot",
+        text: "Image Analysis Results",
+        topic: currentTopic,
+        content: mealPlanResponse,
+        timestamp: new Date().toISOString()
+      };
+  
+      // Save bot message
+      await saveMessage(botMessage);
+      setMessages(prev => [...prev, botMessage]);
+  
+      // Format and save structured meals
+      const structuredMeals = formatMealPlan(mealPlanResponse);
+      saveMealPlanToCalendar(structuredMeals);
+  
     } catch (error) {
-        console.error("Error processing image:", error);
-        setErrorMessage("Error processing image. Please try again.");
+      console.error('Image Processing Error:', error);
+      setErrorMessage("Failed to process the image. Please try again.");
     } finally {
-        setIsProcessingImage(false);
+      setIsProcessingImage(false);
     }
-};
+  };
+  
+  // Helper function to convert File to base64
+  const fileToBase64 = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => {
+        // Extract the base64 data from the result
+        const base64String = reader.result.split(',')[1];
+        resolve(base64String);
+      };
+      reader.onerror = (error) => reject(error);
+    });
+  };
 
   const generateDates = (startDate, duration) => {
     const dates = [];
@@ -379,29 +525,29 @@ const EnhancedMealPlanner = () => {
 
     const userMessage = {
       sender: 'user',
-      content: input,
+      content: input.trim(),
       timestamp: new Date().toISOString()
     };
 
-    setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsTyping(true);
 
     try {
-      const response = await generateMealPlan(input);
+      // Save user message
+      await saveMessage(userMessage);
+
+      // Generate and save bot response
+      const response = await generateMealPlan(userMessage.content);
       const botMessage = {
         sender: 'bot',
         content: response,
         timestamp: new Date().toISOString()
       };
 
-      await saveMessage(userMessage);
       await saveMessage(botMessage);
-
-      setMessages(prev => [...prev, botMessage]);
     } catch (error) {
-      console.error('Error generating response:', error);
-      setErrorMessage('Failed to generate response. Please try again.');
+      console.error('Error in message handling:', error);
+      setErrorMessage('Failed to process message. Some content may be missing.');
     } finally {
       setIsTyping(false);
     }
@@ -516,93 +662,74 @@ const EnhancedMealPlanner = () => {
   };
 
   // Sidebar Component
-  const Sidebar = () => {
+   const Sidebar = ({ onClose }) => {
     if (!historyVisible) return null;
+
+    const handleChatSelect = (chatId) => {
+      setCurrentChat(chatId);
+      // Close sidebar after a short delay for smooth transition
+      setTimeout(() => {
+        setHistoryVisible(false);
+      }, 100);
+    };
 
     return (
       <div className="fixed inset-0 z-30 flex">
         <div 
           className="absolute inset-0 bg-black/20" 
-          onClick={() => setHistoryVisible(false)}
+          onClick={onClose}
         />
 
         <div className="relative w-80 max-w-[calc(100%-3rem)] bg-white shadow-xl animate-in slide-in-from-left">
-          <div className="p-4 border-b border-gray-200">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">Chat History</h2>
+          <div className="p-4 flex flex-col h-full">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-semibold">Chat History</h2>
               <button 
-                onClick={() => setHistoryVisible(false)}
-                className="p-2 text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-100"
+                onClick={onClose}
+                className="p-2 hover:bg-gray-100 rounded-lg"
+                aria-label="Close sidebar"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <button
-              onClick={() => setIsNewTopicInputVisible(true)}
-              className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2 group"
+              onClick={createNewChat}
+              className="flex items-center gap-2 px-4 py-3 mb-4 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
             >
-              <Plus className="w-4 h-4 text-gray-500 group-hover:text-gray-700" />
-              New Topic
+              <Plus className="w-4 h-4" />
+              New Chat
             </button>
 
-            {isNewTopicInputVisible && (
-              <div className="mt-2 flex gap-2">
-                <input
-                  type="text"
-                  value={newTopicInput}
-                  onChange={(e) => setNewTopicInput(e.target.value)}
-                  placeholder="Enter topic name..."
-                  className="flex-1 px-3 py-1 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      createNewTopic();
-                    }
-                  }}
-                /><button
-                onClick={createNewTopic}
-                className="px-3 py-1 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600"
-              >
-                Add
-              </button>
+            <div className="flex-1 overflow-y-auto">
+              {chatHistory.map((chat) => (
+                <button
+                  key={chat.id}
+                  onClick={() => handleChatSelect(chat.id)}
+                  className={`w-full px-4 py-3 text-left flex items-center gap-3 rounded-lg transition-colors ${
+                    currentChat === chat.id 
+                      ? 'bg-blue-50 text-blue-600' 
+                      : 'text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  <MessageSquare className="w-4 h-4" />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium truncate">{chat.name}</div>
+                    <div className="text-xs text-gray-500">
+                      {formatRelative(new Date(chat.createdAt), new Date())}
+                    </div>
+                  </div>
+                  {currentChat === chat.id && (
+                    <ChevronRight className="w-4 h-4 flex-shrink-0" />
+                  )}
+                </button>
+              ))}
             </div>
-          )}
-        </div>
-
-        <div className="p-2">
-          <button
-            onClick={() => setCurrentTopic(null)}
-            className={`w-full px-4 py-2 text-left text-sm rounded-lg flex items-center gap-2 group ${
-              !currentTopic 
-                ? 'bg-blue-50 text-blue-700' 
-                : 'text-gray-700 hover:bg-gray-100'
-            }`}
-          >
-            <Hash className="w-4 h-4" />
-            General
-            <ChevronRight className={`w-4 h-4 ml-auto ${!currentTopic ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} />
-          </button>
-
-          {Object.entries(topics).map(([topicId, topic]) => (
-            <button
-              key={topicId}
-              onClick={() => setCurrentTopic(topicId)}
-              className={`w-full px-4 py-2 text-left text-sm rounded-lg flex items-center gap-2 group ${
-                currentTopic === topicId 
-                  ? 'bg-blue-50 text-blue-700' 
-                  : 'text-gray-700 hover:bg-gray-100'
-              }`}
-            >
-              <Hash className="w-4 h-4" />
-              {topic.name}
-              <ChevronRight className={`w-4 h-4 ml-auto ${currentTopic === topicId ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} />
-            </button>
-          ))}
+          </div>
         </div>
       </div>
-    </div>
-  );
-};
+    );
+  };
 
 // Calendar View Component
 const CalendarView = () => {
@@ -657,6 +784,19 @@ const CalendarView = () => {
       setShowMealModal(true);
     }
   };
+
+  useEffect(() => {
+    const q = query(collection(db, "chats"), orderBy("createdAt", "desc"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const chats = [];
+      snapshot.forEach((doc) => {
+        chats.push({ id: doc.id, ...doc.data() });
+      });
+      setChatHistory(chats);
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   return (
     <>
@@ -774,7 +914,7 @@ const MessageBubble = ({ message }) => (
 
 return (
   <div className="flex h-screen bg-gray-100">
-    <Sidebar />
+    <Sidebar onClose={() => setHistoryVisible(false)} />
     
     <div className="flex-1 flex flex-col">
       <div className="p-4 border-b bg-white flex items-center gap-4">
