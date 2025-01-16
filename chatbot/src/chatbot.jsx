@@ -234,6 +234,15 @@ const EnhancedMealPlanner = () => {
 
   // Generate meal plan
   const generateMealPlan = async (query) => {
+    // Check if the query contains keywords relevant to meal plans
+    const relevantKeywords = ["meal", "diet", "breakfast", "lunch", "dinner", "calories", "nutrition", "protein", "carbs", "fats"];
+    const isRelevant = relevantKeywords.some(keyword => query.toLowerCase().includes(keyword));
+    
+    if (!isRelevant) {
+        return "Sorry, I can't help you with that.";
+    }
+
+    // If relevant, proceed with generating the prompt
     const prompt = `Please create a detailed meal plan with the following guidelines:
 
     Input: "${query}"
@@ -242,6 +251,7 @@ const EnhancedMealPlanner = () => {
     - Specific meal description
     - Approximate calories
     - Key nutrients (protein, carbs, fats)
+    - Separate each meal of the day with spaces.
     
     Format as:
     Breakfast: [Meal] ([Calories] cal)
@@ -255,7 +265,7 @@ const EnhancedMealPlanner = () => {
 
     const result = await model.generateContent(prompt);
     return result.response.text();
-  };
+};
 
   // Save meal plan to calendar
   const saveMealPlanToCalendar = (structuredMeals) => {
