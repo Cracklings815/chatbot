@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Send, Bot, Calendar, Mic, MicOff, Camera, Menu, Hash, X, ChevronRight, ChevronLeft, Plus, MessageSquare } from 'lucide-react';
 import { formatRelative } from 'date-fns';
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { collection, addDoc, onSnapshot, query, orderBy, updateDoc, doc, setDoc, getDoc, serverTimestamp, where} from "firebase/firestore";
+import { collection, addDoc, onSnapshot, query, orderBy, updateDoc, doc, setDoc, getDoc } from "firebase/firestore";
+import { createWorker } from 'tesseract.js';
 import { db } from "./firebase";
 
 const EnhancedMealPlanner = () => {
@@ -25,37 +26,22 @@ const EnhancedMealPlanner = () => {
   const [chatHistory, setChatHistory] = useState([]);
   const [currentChat, setCurrentChat] = useState(null);
   
-  
   const messageEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const fileInputRef = useRef(null);
-  const sidebarRef = useRef(null);
 
   // Initialize Gemini AI
   const genAI = new GoogleGenerativeAI("AIzaSyDBYiHd3rcaqmtoEoRciui0zEz0wK4Um88");
   const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
 
   useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (sidebarRef.current && !sidebarRef.current.contains(event.target)) {
-        setHistoryVisible(false);
-      }
-    };
-
-    if (historyVisible) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [historyVisible]);
-
-
-  useEffect(() => {
     const loadChatHistory = async () => {
       try {
-        const q = query(collection(db, "chats"), orderBy("createdAt", "desc"));
+        const q = query(
+          collection(db, "chats"), 
+          orderBy("createdAt", "desc")
+        );
+        
         const unsubscribe = onSnapshot(q, (snapshot) => {
           const chats = [];
           snapshot.forEach((doc) => {
@@ -67,50 +53,80 @@ const EnhancedMealPlanner = () => {
           if (!currentChat && chats.length > 0) {
             setCurrentChat(chats[0].id);
           }
+        }, (error) => {
+          console.error("Error loading chat history:", error);
+          setErrorMessage("Failed to load chat history. Operating in offline mode.");
         });
+
         return unsubscribe;
       } catch (error) {
-        console.error("Error loading chat history:", error);
-        setErrorMessage("Failed to load chat history.");
+        console.error("Error setting up chat history listener:", error);
+        setErrorMessage("Failed to connect to the database. Operating in offline mode.");
       }
     };
+
     loadChatHistory();
   }, []);
 
+  useEffect(() => {
+    if (!currentChat) return;
+
+    const loadMessages = async () => {
+      try {
+        const q = query(
+          collection(db, "messages"),
+          where("chatId", "==", currentChat),
+          orderBy("timestamp", "asc")
+        );
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+          const newMessages = [];
+          snapshot.forEach((doc) => {
+            newMessages.push({ id: doc.id, ...doc.data() });
+          });
+          setMessages(newMessages);
+        }, (error) => {
+          console.error("Error loading messages:", error);
+          setErrorMessage("Failed to load messages. Some messages may be missing.");
+        });
+
+        return unsubscribe;
+      } catch (error) {
+        console.error("Error setting up messages listener:", error);
+        setErrorMessage("Failed to load messages. Operating in offline mode.");
+      }
+    };
+
+    loadMessages();
+  }, [currentChat]);
 
 
+  // Initialize speech recognition
   const createNewChat = async () => {
     try {
       const newChat = {
-        name: `Meal Plan ${new Date().toLocaleString()}`,
-        createdAt: serverTimestamp(),
-        lastMessage: null,
-        messageCount: 0
+        name: `Chat ${new Date().toLocaleString()}`,
+        createdAt: new Date().toISOString(),
+        type: 'chat'
       };
 
       const docRef = await addDoc(collection(db, "chats"), newChat);
       
-      // After successful creation, switch to the new chat
+      // Update current chat and clear messages
       setCurrentChat(docRef.id);
       setMessages([]);
-      setMealPlans({});
-      setHistoryVisible(false);
       
-      // Add welcome message
-      const welcomeMessage = {
-        sender: 'bot',
-        content: "Hello! I'm ready to help you create a new meal plan. What kind of meals are you looking for?",
-        timestamp: new Date().toISOString(),
-        chatId: docRef.id
-      };
-      
-      await saveMessage(welcomeMessage);
+      // Close the sidebar after a short delay to ensure smooth transition
+      setTimeout(() => {
+        setHistoryVisible(false);
+      }, 100);
       
     } catch (error) {
       console.error("Error creating new chat:", error);
-      setErrorMessage("Failed to create new chat.");
+      setErrorMessage("Failed to create new chat");
     }
   };
+
   // Auto-scroll effect
   useEffect(() => {
     if (chatContainerRef.current) {
@@ -440,27 +456,6 @@ const EnhancedMealPlanner = () => {
     }
   };
 
-  const formatChatDate = (timestamp) => {
-    if (!timestamp) return 'Just now';
-
-    try {
-        // Handle Firestore Timestamp
-        if (timestamp?.toDate) {
-            return formatRelative(timestamp.toDate(), new Date());
-        }
-
-        // Handle ISO string or other date formats
-        const date = new Date(timestamp);
-        if (isNaN(date.getTime())) {
-            return 'Just now';
-        }
-        return formatRelative(date, new Date());
-    } catch (error) {
-        console.error('Error formatting date:', error);
-        return 'Just now';
-    }
-};
-
   // Save meal plan to calendar
   const saveMealPlanToCalendar = (structuredMeals) => {
     const mealPlanData = {
@@ -571,7 +566,6 @@ const EnhancedMealPlanner = () => {
       }
     );
 
-    
     const handleCompletion = async (mealType) => {
       const newStatus = {
         ...completionStatus,
@@ -668,56 +662,74 @@ const EnhancedMealPlanner = () => {
   };
 
   // Sidebar Component
-  const Sidebar = ({ onClose }) => {
+   const Sidebar = ({ onClose }) => {
     if (!historyVisible) return null;
 
+    const handleChatSelect = (chatId) => {
+      setCurrentChat(chatId);
+      // Close sidebar after a short delay for smooth transition
+      setTimeout(() => {
+        setHistoryVisible(false);
+      }, 100);
+    };
+
     return (
-        <div className="fixed inset-0 z-30 flex">
-            <div 
-                className="absolute inset-0 bg-black/20" 
+      <div className="fixed inset-0 z-30 flex">
+        <div 
+          className="absolute inset-0 bg-black/20" 
+          onClick={onClose}
+        />
+
+        <div className="relative w-80 max-w-[calc(100%-3rem)] bg-white shadow-xl animate-in slide-in-from-left">
+          <div className="p-4 flex flex-col h-full">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-semibold">Chat History</h2>
+              <button 
                 onClick={onClose}
-            />
-            <div className="relative w-80 max-w-[calc(100%-3rem)] bg-white shadow-xl animate-in slide-in-from-left">
-                <div className="p-4 flex flex-col h-full">
-                    <div className="flex items-center justify-between mb-6">
-                        <h2 className="text-xl font-semibold">Chat History</h2>
-                        <button 
-                            onClick={onClose}
-                            className="p-2 hover:bg-gray-100 rounded-lg"
-                            aria-label="Close sidebar"
-                        >
-                            <X className="w-5 h-5" />
-                        </button>
-                    </div>
-                    <div className="flex-1 overflow-y-auto">
-                        {chatHistory.map((chat) => (
-                            <button
-                                key={chat.id}
-                                onClick={() => {
-                                    setCurrentChat(chat.id);
-                                    setHistoryVisible(false);
-                                }}
-                                className={`w-full px-4 py-3 text-left flex items-center gap-3 rounded-lg transition-colors ${
-                                    currentChat === chat.id 
-                                        ? 'bg-blue-50 text-blue-600' 
-                                        : 'text-gray-700 hover:bg-gray-100'
-                                }`}
-                            >
-                                <MessageSquare className="w-4 h-4" />
-                                <div className="flex-1 min-w-0">
-                                    <div className="font-medium truncate">{chat.name}</div>
-                                    <div className="text-xs text-gray-500">
-                                        {formatChatDate(chat.createdAt)} {/* Use the formatChatDate function here */}
-                                    </div>
-                                </div>
-                            </button>
-                        ))}
-                    </div>
-                </div>
+                className="p-2 hover:bg-gray-100 rounded-lg"
+                aria-label="Close sidebar"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
+
+            <button
+              onClick={createNewChat}
+              className="flex items-center gap-2 px-4 py-3 mb-4 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              New Chat
+            </button>
+
+            <div className="flex-1 overflow-y-auto">
+              {chatHistory.map((chat) => (
+                <button
+                  key={chat.id}
+                  onClick={() => handleChatSelect(chat.id)}
+                  className={`w-full px-4 py-3 text-left flex items-center gap-3 rounded-lg transition-colors ${
+                    currentChat === chat.id 
+                      ? 'bg-blue-50 text-blue-600' 
+                      : 'text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  <MessageSquare className="w-4 h-4" />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium truncate">{chat.name}</div>
+                    <div className="text-xs text-gray-500">
+                      {formatRelative(new Date(chat.createdAt), new Date())}
+                    </div>
+                  </div>
+                  {currentChat === chat.id && (
+                    <ChevronRight className="w-4 h-4 flex-shrink-0" />
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
+      </div>
     );
-};
+  };
 
 // Calendar View Component
 const CalendarView = () => {
