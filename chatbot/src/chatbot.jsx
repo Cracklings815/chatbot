@@ -27,11 +27,11 @@ const EnhancedMealPlanner = () => {
   const chatContainerRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  // Initialize Gemini AI
-  const genAI = new GoogleGenerativeAI("AIzaSyDBYiHd3rcaqmtoEoRciui0zEz0wK4Um88");
+  //AI
+  const genAI = new GoogleGenerativeAI("AIzaSyCnvM7E4KeUJGeIqjemXKk8kjAtPN934Sk");
   const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
 
-  // Initialize speech recognition
+  
   useEffect(() => {
     if ('webkitSpeechRecognition' in window) {
       const recognition = new window.webkitSpeechRecognition();
@@ -196,71 +196,68 @@ const EnhancedMealPlanner = () => {
   // Format meal plan from AI response
   const formatMealPlan = (response) => {
     const meals = {
-        breakfast: { description: '', nutrients: '' },
-        lunch: { description: '', nutrients: '' },
-        dinner: { description: '', nutrients: '' }
+      breakfast: { description: '', nutrients: '' },
+      lunch: { description: '', nutrients: '' },
+      dinner: { description: '', nutrients: '' }
     };
-
+  
     try {
-        // Split by meal markers
-        const lines = response.split('\n');
-        let currentMeal = null;
-
-        lines.forEach(line => {
-            line = line.trim();
-            
-            // Check for meal headers with more flexible matching
-            if (line.toLowerCase().includes('breakfast')) {
-                currentMeal = 'breakfast';
-                const [_, ...description] = line.split(':');
-                if (description.length > 0) {
-                    const [mealDesc, ...nutrients] = description.join(':').split('(');
-                    meals.breakfast.description = mealDesc.trim();
-                    if (nutrients.length > 0) {
-                        meals.breakfast.nutrients = nutrients.join('(').replace(/\)$/, '').trim();
-                    }
-                }
-            } else if (line.toLowerCase().includes('lunch')) {
-                currentMeal = 'lunch';
-                const [_, ...description] = line.split(':');
-                if (description.length > 0) {
-                    const [mealDesc, ...nutrients] = description.join(':').split('(');
-                    meals.lunch.description = mealDesc.trim();
-                    if (nutrients.length > 0) {
-                        meals.lunch.nutrients = nutrients.join('(').replace(/\)$/, '').trim();
-                    }
-                }
-            } else if (line.toLowerCase().includes('dinner')) {
-                currentMeal = 'dinner';
-                const [_, ...description] = line.split(':');
-                if (description.length > 0) {
-                    const [mealDesc, ...nutrients] = description.join(':').split('(');
-                    meals.dinner.description = mealDesc.trim();
-                    if (nutrients.length > 0) {
-                        meals.dinner.nutrients = nutrients.join('(').replace(/\)$/, '').trim();
-                    }
-                }
-            } else if (currentMeal && line.length > 0 && !line.startsWith('*') && !line.startsWith('#')) {
-                // Append additional details to current meal description
-                meals[currentMeal].description += ' ' + line.trim();
+      const lines = response.split('\n');
+      let currentMeal = null;
+  
+      lines.forEach(line => {
+        line = line.trim();
+        
+        if (line.toLowerCase().includes('breakfast')) {
+          currentMeal = 'breakfast';
+          const [_, ...description] = line.split(':');
+          if (description.length > 0) {
+            const [mealDesc, ...nutrients] = description.join(':').split('(');
+            meals.breakfast.description = mealDesc.trim();
+            if (nutrients.length > 0) {
+              meals.breakfast.nutrients = nutrients.join('(').replace(/\)$/, '').trim();
             }
-        });
-    } catch (error) {
-        console.error('Error parsing meal plan:', error);
-    }
-
-    // Clean up descriptions by removing markdown symbols and extra spaces
-    Object.keys(meals).forEach(meal => {
+          }
+        } else if (line.toLowerCase().includes('lunch')) {
+          currentMeal = 'lunch';
+          const [_, ...description] = line.split(':');
+          if (description.length > 0) {
+            const [mealDesc, ...nutrients] = description.join(':').split('(');
+            meals.lunch.description = mealDesc.trim();
+            if (nutrients.length > 0) {
+              meals.lunch.nutrients = nutrients.join('(').replace(/\)$/, '').trim();
+            }
+          }
+        } else if (line.toLowerCase().includes('dinner')) {
+          currentMeal = 'dinner';
+          const [_, ...description] = line.split(':');
+          if (description.length > 0) {
+            const [mealDesc, ...nutrients] = description.join(':').split('(');
+            meals.dinner.description = mealDesc.trim();
+            if (nutrients.length > 0) {
+              meals.dinner.nutrients = nutrients.join('(').replace(/\)$/, '').trim();
+            }
+          }
+        } else if (currentMeal && line.length > 0 && !line.startsWith('===')) {
+          meals[currentMeal].description += ' ' + line.trim();
+        }
+      });
+  
+      // Clean up descriptions
+      Object.keys(meals).forEach(meal => {
         meals[meal].description = meals[meal].description
-            .replace(/\*/g, '')
-            .replace(/#+/g, '')
-            .replace(/\s+/g, ' ')
-            .trim();
-    });
-
-    console.log("Formatted meals:", meals);
+          .replace(/\*/g, '')
+          .replace(/#+/g, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+      });
+  
+    } catch (error) {
+      console.error('Error parsing meal plan:', error);
+    }
+  
     return meals;
-};
+  };
 
   // Save message to Firebase
   const saveMessage = async (message) => {
@@ -291,8 +288,12 @@ const EnhancedMealPlanner = () => {
       const base64Image = await fileToBase64(file);
       const imageUrl = URL.createObjectURL(file);
   
-      // First, get a description of the image and any visible text
-      const imageDescriptionPrompt = "Describe this image in detail, focusing on any visible food, ingredients, recipes, or nutritional information. Include any text you can see in the image.";
+      // Create a focused prompt for food recognition and nutrition
+      const imageAnalysisPrompt = `Please analyze this food image and provide:
+      1. Identify the type(s) of food visible
+      2. Estimate nutritional values where possible (calories, protein, carbs, fats)
+      3. List any visible ingredients or components
+      Please format as a clear description without day numbers or meal plan structure.`;
       
       const imageData = {
         inlineData: {
@@ -301,24 +302,23 @@ const EnhancedMealPlanner = () => {
         }
       };
   
-      // Generate image description using Gemini Pro Vision
-      const descriptionResult = await model.generateContent([imageDescriptionPrompt, imageData]);
-      const imageDescription = await descriptionResult.response.text();
+      // Generate image analysis using Gemini Pro Vision
+      const analysisResult = await model.generateContent([imageAnalysisPrompt, imageData]);
+      const foodAnalysis = await analysisResult.response.text();
   
-      // Create prompt for meal plan based on image content
-      const mealPlanPrompt = `Based on this image content: "${imageDescription}"
-      Please create a structured meal plan. If you see specific meals or recipes, include those.
-      If you see ingredients, suggest meals that could be made with them.
-      Include estimated nutritional information where possible.
-      Format the response with clear sections for:
-      - Breakfast
-      - Lunch
-      - Dinner
-      Include calorie estimates and major nutrients if possible.`;
+      // Create nutrition-focused prompt based on identified food
+      const nutritionPrompt = `Based on the identified food: "${foodAnalysis}"
+      Please provide:
+      - Key nutrients and their amounts
+      - Any relevant dietary information or considerations
+      Format as a simple nutritional analysis without meal planning structure.`;
   
-      // Generate meal plan response
-      const mealPlanResult = await model.generateContent(mealPlanPrompt);
-      const mealPlanResponse = mealPlanResult.response.text();
+      // Generate nutritional information
+      const nutritionResult = await model.generateContent(nutritionPrompt);
+      const nutritionAnalysis = nutritionResult.response.text();
+  
+      // Combine analysis results
+      const combinedAnalysis = `Food Analysis:\n${foodAnalysis}\n\nNutritional Information:\n${nutritionAnalysis}`;
   
       // Create user image message
       const userImageMessage = {
@@ -334,12 +334,12 @@ const EnhancedMealPlanner = () => {
       await saveMessage(userImageMessage);
       setMessages(prev => [...prev, userImageMessage]);
   
-      // Create bot message with detected content and meal plan
+      // Create bot message with analysis
       const botMessage = {
         sender: "bot",
         text: "Image Analysis Results",
         topic: currentTopic,
-        content: mealPlanResponse,
+        content: combinedAnalysis,
         timestamp: new Date().toISOString()
       };
   
@@ -347,9 +347,39 @@ const EnhancedMealPlanner = () => {
       await saveMessage(botMessage);
       setMessages(prev => [...prev, botMessage]);
   
-      // Format and save structured meals
-      const structuredMeals = formatMealPlan(mealPlanResponse);
-      saveMealPlanToCalendar(structuredMeals);
+      // Format and structure the meal data
+      const foodData = {
+        description: foodAnalysis,
+        nutrients: nutritionAnalysis
+      };
+  
+      // Save to current date in calendar if needed
+      const dateString = selectedDate.toISOString();
+      const currentMealPlan = mealPlans[dateString] || {
+        date: dateString,
+        meals: {
+          breakfast: {},
+          lunch: {},
+          dinner: {}
+        },
+        completed: {
+          breakfast: false,
+          lunch: false,
+          dinner: false
+        }
+      };
+  
+      // Save to Firebase
+      try {
+        const mealPlanRef = doc(db, "mealPlans", dateString);
+        await setDoc(mealPlanRef, {
+          ...currentMealPlan,
+          imageAnalysis: foodData
+        });
+      } catch (error) {
+        console.error('Error saving food analysis to Firebase:', error);
+        setErrorMessage('Failed to save food analysis');
+      }
   
     } catch (error) {
       console.error('Image Processing Error:', error);
@@ -358,6 +388,7 @@ const EnhancedMealPlanner = () => {
       setIsProcessingImage(false);
     }
   };
+
   const fileToBase64 = (file) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -384,83 +415,201 @@ const EnhancedMealPlanner = () => {
 
   // Generate meal plan
   // In your generateMealPlan function, modify it to handle different durations:
-  const generateMealPlan = async (prompt) => {
-    try {
-      // Validate if the prompt is related to meal planning
-      const validKeywords = ['meal', 'diet', 'food', 'breakfast', 'lunch', 'dinner', 'plan', 'calories', 'nutrition'];
-      const isMealPlanRelated = validKeywords.some((keyword) =>
-        prompt.toLowerCase().includes(keyword)
-      );
+  // const generateMealPlan = async (prompt) => {
+  //   try {
+  //     const validKeywords = ['meal', 'diet', 'food', 'breakfast', 'lunch', 'dinner', 'plan', 'calories', 'nutrition'];
+  //     const isMealPlanRelated = validKeywords.some((keyword) =>
+  //       prompt.toLowerCase().includes(keyword)
+  //     );
   
-      if (!isMealPlanRelated) {
-        throw new Error("The prompt is not related to meal planning. Please provide a relevant request.");
-      }
+  //     if (!isMealPlanRelated) {
+  //       throw new Error("The prompt is not related to meal planning. Please provide a relevant request.");
+  //     }
   
-      // Determine the duration based on the prompt
-      const duration = prompt.toLowerCase().includes('week') ? 7 : 1;
+  //     const promptLower = prompt.toLowerCase();
+  //     let duration = 1; // Default to one day
   
-      // Generate the dates for the meal plan
-      const dates = generateDates(selectedDate, duration);
+  //     // Check for specific day mentions
+  //     if (promptLower.includes('month')) duration = 30;
+  //     else if (promptLower.includes('week') || promptLower.includes('7 day')) duration = 7;
+  //     else {
+  //       for (let i = 6; i >= 1; i--) {
+  //         if (promptLower.includes(`${i} day`)) {
+  //           duration = i;
+  //           break;
+  //         }
+  //       }
+  //     }
   
-      // Enhance the prompt for better AI guidance
-      let enhancedPrompt = prompt;
-      if (duration > 1) {
-        enhancedPrompt = `Create a ${duration}-day meal plan, clearly separated by days. For each day, include:\n` +
-          `- Breakfast with calories and nutrients\n` +
-          `- Lunch with calories and nutrients\n` +
-          `- Dinner with calories and nutrients\n` +
-          `Based on this request: ${prompt}`;
-      }
+  //     const dates = generateDates(selectedDate, duration);
+  //     const durationText = duration === 30 ? 'monthly' : 
+  //                         duration === 7 ? 'weekly' : 
+  //                         duration === 1 ? 'daily' : 
+  //                         `${duration}-day`;
   
-      // Generate content from the AI model
-      const result = await model.generateContent(enhancedPrompt);
-      const response = await result.response.text();
+  //     const enhancedPrompt = `Create a detailed ${durationText} meal plan with the following requirements:
+  //     ${prompt}\n
+  //     Please provide a UNIQUE and DIFFERENT meal plan for each day, following this EXACT format:
+      
+  //     Day 1:
+  //     Breakfast: [unique meal] (calories)
+  //     Lunch: [unique meal] (calories)
+  //     Dinner: [unique meal] (calories)
+      
+  //     [Continue same format for all ${duration} days]
+      
+  //     Important guidelines:
+  //     - Each day MUST be clearly labeled as "Day 1", "Day 2", etc.
+  //     - Create completely different meals for each day
+  //     - Include specific calorie counts for each meal
+  //     - Ensure all ${duration} days are distinct and varied
+  //     - Consider nutritional balance`;
   
-      // Format and save the meal plans for the specified dates
-      await formatAndSaveMealPlans(response, dates);
+  //     const result = await model.generateContent(enhancedPrompt);
+  //     const response = await result.response.text();
   
-      return response; // Return the AI-generated meal plan
-    } catch (error) {
-      console.error('Error generating meal plan:', error);
-      throw new Error(error.message || 'Failed to generate a meal plan. Please try again.');
+  //     const dayCount = (response.match(/Day \d+:/g) || []).length;
+  //     if (dayCount < duration) {
+  //       throw new Error(`AI response incomplete: Only received ${dayCount} days of ${duration} requested. Retrying...`);
+  //     }
+  
+  //     return await formatAndSaveMealPlans(response, dates);
+  //   } catch (error) {
+  //     console.error('Error generating meal plan:', error);
+  //     throw new Error(error.message || 'Failed to generate a meal plan. Please try again.');
+  //   }
+  // };
+  // Modified generateMealPlan function with batch processing
+const generateMealPlan = async (prompt) => {
+  try {
+    const validKeywords = ['meal', 'diet', 'food', 'breakfast', 'lunch', 'dinner', 'plan', 'calories', 'nutrition'];
+    const isMealPlanRelated = validKeywords.some((keyword) =>
+      prompt.toLowerCase().includes(keyword)
+    );
+
+    if (!isMealPlanRelated) {
+      throw new Error("The prompt is not related to meal planning. Please provide a relevant request.");
     }
-  };
 
-  // Save meal plan to calendar
-  const saveMealPlanToCalendar = (structuredMeals) => {
-    const mealPlanData = {
-      date: selectedDate.toISOString(),
-      meals: structuredMeals,
-      completed: {
-        breakfast: false,
-        lunch: false,
-        dinner: false
+    const promptLower = prompt.toLowerCase();
+    let duration = 1; // Default to one day
+
+    // Check for specific day mentions
+    const daysMatch = promptLower.match(/(\d+)\s*days?/);
+    if (daysMatch) {
+      duration = parseInt(daysMatch[1]);
+    }
+    // Then check for other time periods
+    else if (promptLower.includes('month')) {
+      duration = 30;
+    }
+    else if (promptLower.includes('week')) {
+      duration = 7;
+    }
+
+    // Add validation to ensure reasonable duration
+    if (duration > 30) {
+      duration = 30; // Cap at 30 days
+    }
+
+    const dates = generateDates(selectedDate, duration);
+    const batchSize = 7; // Process 7 days at a time
+    const allMealPlans = {};
+
+    // Process in batches
+    for (let i = 0; i < duration; i += batchSize) {
+      const currentBatchSize = Math.min(batchSize, duration - i);
+      const batchDates = dates.slice(i, i + currentBatchSize);
+      
+      const batchPrompt = `Create a detailed meal plan for ${currentBatchSize} days (Days ${i + 1}-${i + currentBatchSize}) with these requirements:
+      ${prompt}\n
+      Please provide a UNIQUE and DIFFERENT meal plan for each day, following this EXACT format:
+      
+      Day ${i + 1}:
+      Breakfast: [unique meal] (calories)
+      Lunch: [unique meal] (calories)
+      Dinner: [unique meal] (calories)
+      
+      [Continue same format for all ${currentBatchSize} days]
+      
+      Important guidelines:
+      - Each day MUST be clearly labeled as "Day X"
+      - Create completely different meals for each day
+      - Include specific calorie counts for each meal
+      - Ensure all days are distinct and varied
+      - Consider nutritional balance
+      
+      Previous meals generated: ${Object.keys(allMealPlans).length} days
+      Current batch: Days ${i + 1}-${i + currentBatchSize}`;
+
+      const result = await model.generateContent(batchPrompt);
+      const response = await result.response.text();
+
+      // Validate batch response
+      const dayCount = (response.match(/Day \d+:/g) || []).length;
+      if (dayCount < currentBatchSize) {
+        throw new Error(`Batch generation incomplete: Only received ${dayCount} days of ${currentBatchSize} requested. Retrying batch...`);
       }
-    };
 
-    setMealPlans(prev => ({
-      ...prev,
-      [selectedDate.toISOString()]: mealPlanData
-    }));
-  };
+      // Format and save batch
+      const batchMealPlans = await formatAndSaveMealPlans(response, batchDates);
+      Object.assign(allMealPlans, batchMealPlans);
+
+      // Add delay between batches to prevent rate limiting
+      if (i + batchSize < duration) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+
+    // Validate final result
+    if (Object.keys(allMealPlans).length !== duration) {
+      throw new Error(`Failed to generate complete meal plan: Only generated ${Object.keys(allMealPlans).length} of ${duration} days`);
+    }
+
+    return allMealPlans;
+  } catch (error) {
+    console.error('Error generating meal plan:', error);
+    throw new Error(error.message || 'Failed to generate a meal plan. Please try again.');
+  }
+};
+
+// Helper function to break down responses into days
+const parseDayPlans = (response) => {
+  const days = [];
+  const dayMatches = response.match(/Day \d+:[\s\S]*?(?=Day \d+:|$)/g) || [];
+  
+  return dayMatches.map(day => day.trim());
+};
 
   const formatAndSaveMealPlans = async (response, dates) => {
-    // Split the response into days if it's a multi-day plan
-    const dayPlans = response.split(/Day \d+:/g)
+    const dayPlans = response
+      .split(/Day \d+:/g)
       .filter(day => day.trim())
       .map(day => day.trim());
     
     const newMealPlans = {};
     
-    for (let i = 0; i < Math.min(dayPlans.length, dates.length); i++) {
-      const dayPlan = dayPlans[i];
+    for (let i = 0; i < dates.length; i++) {
+      if (!dayPlans[i]) {
+        console.error(`Missing meal plan for day ${i + 1}`);
+        continue;
+      }
+  
       const date = dates[i];
       const dateString = date.toISOString();
+      const structuredMeals = formatMealPlan(dayPlans[i]);
       
-      const structuredMeals = formatMealPlan(dayPlan);
+      if (!structuredMeals ||
+          !structuredMeals.breakfast?.description ||
+          !structuredMeals.lunch?.description ||
+          !structuredMeals.dinner?.description) {
+        console.error(`Incomplete meal plan for day ${i + 1}`);
+        continue;
+      }
       
       newMealPlans[dateString] = {
         date: dateString,
+        dayNumber: i + 1,
         meals: structuredMeals,
         completed: {
           breakfast: false,
@@ -469,23 +618,29 @@ const EnhancedMealPlanner = () => {
         }
       };
       
-      // Save to Firebase with error handling
-      try {
-        const mealPlanRef = doc(db, "mealPlans", dateString);
-        await setDoc(mealPlanRef, newMealPlans[dateString]);
-      } catch (error) {
-        console.error("Error saving meal plan to Firebase:", error);
-        // Optionally set an error message for the user
-        setErrorMessage("Failed to save meal plan to database");
+      // Save to Firebase with retries
+      let retries = 3;
+      while (retries > 0) {
+        try {
+          const mealPlanRef = doc(db, "mealPlans", dateString);
+          await setDoc(mealPlanRef, newMealPlans[dateString]);
+          break;
+        } catch (error) {
+          retries--;
+          if (retries === 0) {
+            console.error(`Error saving meal plan for day ${i + 1} to Firebase:`, error);
+            setErrorMessage(`Failed to save meal plan for ${date.toLocaleDateString()}`);
+          }
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
       }
     }
     
-    // Update local state with all new meal plans
     setMealPlans(prev => ({
       ...prev,
       ...newMealPlans
     }));
-    console.log("Updated meal plans:", newMealPlans); 
+    
     return newMealPlans;
   };
 
@@ -585,93 +740,93 @@ const EnhancedMealPlanner = () => {
   };
 
   // Sidebar Component
-  const Sidebar = () => {
-    if (!historyVisible) return null;
+//   const Sidebar = () => {
+//     if (!historyVisible) return null;
 
-    return (
-      <div className="fixed inset-0 z-30 flex">
-        <div 
-          className="absolute inset-0 bg-black/20" 
-          onClick={() => setHistoryVisible(false)}
-        />
+//     return (
+//       <div className="fixed inset-0 z-30 flex">
+//         <div 
+//           className="absolute inset-0 bg-black/20" 
+//           onClick={() => setHistoryVisible(false)}
+//         />
 
-        <div className="relative w-80 max-w-[calc(100%-3rem)] bg-white shadow-xl animate-in slide-in-from-left">
-          <div className="p-4 border-b border-gray-200">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">Chat History</h2>
-              <button 
-                onClick={() => setHistoryVisible(false)}
-                className="p-2 text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-100"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+//         <div className="relative w-80 max-w-[calc(100%-3rem)] bg-white shadow-xl animate-in slide-in-from-left">
+//           <div className="p-4 border-b border-gray-200">
+//             <div className="flex items-center justify-between mb-4">
+//               <h2 className="text-lg font-semibold text-gray-900">Chat History</h2>
+//               <button 
+//                 onClick={() => setHistoryVisible(false)}
+//                 className="p-2 text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-100"
+//               >
+//                 <X className="w-5 h-5" />
+//               </button>
+//             </div>
 
-            <button
-              onClick={() => setIsNewTopicInputVisible(true)}
-              className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2 group"
-            >
-              <Plus className="w-4 h-4 text-gray-500 group-hover:text-gray-700" />
-              New Topic
-            </button>
+//             <button
+//               onClick={() => setIsNewTopicInputVisible(true)}
+//               className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2 group"
+//             >
+//               <Plus className="w-4 h-4 text-gray-500 group-hover:text-gray-700" />
+//               New Topic
+//             </button>
 
-            {isNewTopicInputVisible && (
-              <div className="mt-2 flex gap-2">
-                <input
-                  type="text"
-                  value={newTopicInput}
-                  onChange={(e) => setNewTopicInput(e.target.value)}
-                  placeholder="Enter topic name..."
-                  className="flex-1 px-3 py-1 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      createNewTopic();
-                    }
-                  }}
-                /><button
-                onClick={createNewTopic}
-                className="px-3 py-1 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600"
-              >
-                Add
-              </button>
-            </div>
-          )}
-        </div>
+//             {isNewTopicInputVisible && (
+//               <div className="mt-2 flex gap-2">
+//                 <input
+//                   type="text"
+//                   value={newTopicInput}
+//                   onChange={(e) => setNewTopicInput(e.target.value)}
+//                   placeholder="Enter topic name..."
+//                   className="flex-1 px-3 py-1 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+//                   onKeyDown={(e) => {
+//                     if (e.key === 'Enter') {
+//                       createNewTopic();
+//                     }
+//                   }}
+//                 /><button
+//                 onClick={createNewTopic}
+//                 className="px-3 py-1 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+//               >
+//                 Add
+//               </button>
+//             </div>
+//           )}
+//         </div>
 
-        <div className="p-2">
-          <button
-            onClick={() => setCurrentTopic(null)}
-            className={`w-full px-4 py-2 text-left text-sm rounded-lg flex items-center gap-2 group ${
-              !currentTopic 
-                ? 'bg-blue-50 text-blue-700' 
-                : 'text-gray-700 hover:bg-gray-100'
-            }`}
-          >
-            <Hash className="w-4 h-4" />
-            General
-            <ChevronRight className={`w-4 h-4 ml-auto ${!currentTopic ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} />
-          </button>
+//         <div className="p-2">
+//           <button
+//             onClick={() => setCurrentTopic(null)}
+//             className={`w-full px-4 py-2 text-left text-sm rounded-lg flex items-center gap-2 group ${
+//               !currentTopic 
+//                 ? 'bg-blue-50 text-blue-700' 
+//                 : 'text-gray-700 hover:bg-gray-100'
+//             }`}
+//           >
+//             <Hash className="w-4 h-4" />
+//             General
+//             <ChevronRight className={`w-4 h-4 ml-auto ${!currentTopic ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} />
+//           </button>
 
-          {Object.entries(topics).map(([topicId, topic]) => (
-            <button
-              key={topicId}
-              onClick={() => setCurrentTopic(topicId)}
-              className={`w-full px-4 py-2 text-left text-sm rounded-lg flex items-center gap-2 group ${
-                currentTopic === topicId 
-                  ? 'bg-blue-50 text-blue-700' 
-                  : 'text-gray-700 hover:bg-gray-100'
-              }`}
-            >
-              <Hash className="w-4 h-4" />
-              {topic.name}
-              <ChevronRight className={`w-4 h-4 ml-auto ${currentTopic === topicId ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} />
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-};
+//           {Object.entries(topics).map(([topicId, topic]) => (
+//             <button
+//               key={topicId}
+//               onClick={() => setCurrentTopic(topicId)}
+//               className={`w-full px-4 py-2 text-left text-sm rounded-lg flex items-center gap-2 group ${
+//                 currentTopic === topicId 
+//                   ? 'bg-blue-50 text-blue-700' 
+//                   : 'text-gray-700 hover:bg-gray-100'
+//               }`}
+//             >
+//               <Hash className="w-4 h-4" />
+//               {topic.name}
+//               <ChevronRight className={`w-4 h-4 ml-auto ${currentTopic === topicId ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} />
+//             </button>
+//           ))}
+//         </div>
+//       </div>
+//     </div>
+//   );
+// };
 
 // Calendar View Component
 const CalendarView = () => {
@@ -818,41 +973,84 @@ const CalendarView = () => {
 };
 
 // Message Bubble Component
-const MessageBubble = ({ message }) => (
-  <div className={`flex ${message.sender === 'bot' ? 'justify-start' : 'justify-end'} mb-4`}>
-    <div className={`
-      max-w-[70%] rounded-2xl p-4
-      ${message.sender === 'bot' 
-        ? 'bg-white border border-gray-200 text-gray-800' 
-        : 'bg-blue-500 text-white'}
-    `}>
-      {message.type === 'image' ? (
-        <img src={message.content} alt="Meal" className="rounded-lg max-w-full" />
-      ) : (
-        <p>{message.content}</p>
-      )}
+const MessageBubble = ({ message }) => {
+  const formatJSONContent = (content) => {
+    if (typeof content !== 'object' || content === null) {
+      return content;
+    }
+
+    return (
+      <div className="space-y-4">
+        {Object.entries(content).map(([date, dayData]) => (
+          <div key={date} className="border-b border-gray-200 pb-4">
+            <div className="font-medium text-lg mb-2">
+              {formatRelative(new Date(date), new Date())}
+            </div>
+            
+            <div className="space-y-3">
+              {Object.entries(dayData.meals).map(([mealType, mealInfo]) => (
+                <div key={mealType} className="pl-4 border-l-2 border-blue-200">
+                  <div className="font-medium capitalize">{mealType}</div>
+                  <div className="text-gray-600">{mealInfo.description}</div>
+                  <div className="text-sm text-gray-500">{mealInfo.nutrients}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const renderContent = () => {
+    // Handle image messages
+    if (message.type === 'image') {
+      return (
+        <div className="max-w-sm">
+          <img 
+            src={message.imageUrl} 
+            alt="Food" 
+            className="rounded-lg w-full h-auto object-cover"
+          />
+        </div>
+      );
+    }
+    
+    // Handle text/JSON content
+    if (typeof message.content === 'string') {
+      return message.content;
+    }
+    
+    return formatJSONContent(message.content);
+  };
+
+  return (
+    <div className={`flex ${message.sender === 'bot' ? 'justify-start' : 'justify-end'} mb-4`}>
       <div className={`
-        text-xs mt-2
-        ${message.sender === 'bot' ? 'text-gray-500' : 'text-blue-100'}
+        max-w-[70%] rounded-2xl p-4
+        ${message.sender === 'bot' 
+          ? 'bg-white border border-gray-200 text-gray-800' 
+          : 'bg-blue-500 text-white'}
       `}>
-        {formatRelative(new Date(message.timestamp), new Date())}
+        <div className="whitespace-pre-wrap">{renderContent()}</div>
+        <div className={`
+          text-xs mt-2
+          ${message.sender === 'bot' ? 'text-gray-500' : 'text-blue-100'}
+        `}>
+          {formatRelative(new Date(message.timestamp), new Date())}
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
+
 
 return (
   <div className="flex h-screen bg-gray-100">
-    <Sidebar />
+    {/* Sidebar */}
     
     <div className="flex-1 flex flex-col">
       <div className="p-4 border-b bg-white flex items-center gap-4">
-        <button
-          onClick={() => setHistoryVisible(true)}
-          className="p-2 hover:bg-gray-100 rounded-lg"
-        >
-          <Menu className="w-5 h-5" />
-        </button>
         <h1 className="text-xl font-bold">Mealy</h1>
         {errorMessage && (
           <div className="text-red-500 text-sm ml-auto">{errorMessage}</div>
