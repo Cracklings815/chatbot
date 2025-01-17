@@ -27,11 +27,11 @@ const EnhancedMealPlanner = () => {
   const chatContainerRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  // Initialize Gemini AI
-  const genAI = new GoogleGenerativeAI("AIzaSyAzyrzOgb5JbuPhzxL4LSRpFIrBDbUfTf8");
+  //AI
+  const genAI = new GoogleGenerativeAI("AIzaSyCnvM7E4KeUJGeIqjemXKk8kjAtPN934Sk");
   const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
 
-  // Initialize speech recognition
+  
   useEffect(() => {
     if ('webkitSpeechRecognition' in window) {
       const recognition = new window.webkitSpeechRecognition();
@@ -495,15 +495,21 @@ const generateMealPlan = async (prompt) => {
     let duration = 1; // Default to one day
 
     // Check for specific day mentions
-    if (promptLower.includes('month')) duration = 30;
-    else if (promptLower.includes('week') || promptLower.includes('7 day')) duration = 7;
-    else {
-      for (let i = 6; i >= 1; i--) {
-        if (promptLower.includes(`${i} day`)) {
-          duration = i;
-          break;
-        }
-      }
+    const daysMatch = promptLower.match(/(\d+)\s*days?/);
+    if (daysMatch) {
+      duration = parseInt(daysMatch[1]);
+    }
+    // Then check for other time periods
+    else if (promptLower.includes('month')) {
+      duration = 30;
+    }
+    else if (promptLower.includes('week')) {
+      duration = 7;
+    }
+
+    // Add validation to ensure reasonable duration
+    if (duration > 30) {
+      duration = 30; // Cap at 30 days
     }
 
     const dates = generateDates(selectedDate, duration);
@@ -968,19 +974,54 @@ const CalendarView = () => {
 
 // Message Bubble Component
 const MessageBubble = ({ message }) => {
-  // Extract content safely from the message
-  const getDisplayContent = () => {
+  const formatJSONContent = (content) => {
+    if (typeof content !== 'object' || content === null) {
+      return content;
+    }
+
+    return (
+      <div className="space-y-4">
+        {Object.entries(content).map(([date, dayData]) => (
+          <div key={date} className="border-b border-gray-200 pb-4">
+            <div className="font-medium text-lg mb-2">
+              {formatRelative(new Date(date), new Date())}
+            </div>
+            
+            <div className="space-y-3">
+              {Object.entries(dayData.meals).map(([mealType, mealInfo]) => (
+                <div key={mealType} className="pl-4 border-l-2 border-blue-200">
+                  <div className="font-medium capitalize">{mealType}</div>
+                  <div className="text-gray-600">{mealInfo.description}</div>
+                  <div className="text-sm text-gray-500">{mealInfo.nutrients}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const renderContent = () => {
+    // Handle image messages
+    if (message.type === 'image') {
+      return (
+        <div className="max-w-sm">
+          <img 
+            src={message.imageUrl} 
+            alt="Food" 
+            className="rounded-lg w-full h-auto object-cover"
+          />
+        </div>
+      );
+    }
+    
+    // Handle text/JSON content
     if (typeof message.content === 'string') {
       return message.content;
     }
-    if (message.type === 'image') {
-      return <img src={message.content} alt="Meal" className="rounded-lg max-w-full" />;
-    }
-    // If content is an object, convert it to a readable format
-    if (typeof message.content === 'object' && message.content !== null) {
-      return JSON.stringify(message.content, null, 2);
-    }
-    return 'Content unavailable';
+    
+    return formatJSONContent(message.content);
   };
 
   return (
@@ -991,7 +1032,7 @@ const MessageBubble = ({ message }) => {
           ? 'bg-white border border-gray-200 text-gray-800' 
           : 'bg-blue-500 text-white'}
       `}>
-        <div className="whitespace-pre-wrap">{getDisplayContent()}</div>
+        <div className="whitespace-pre-wrap">{renderContent()}</div>
         <div className={`
           text-xs mt-2
           ${message.sender === 'bot' ? 'text-gray-500' : 'text-blue-100'}
