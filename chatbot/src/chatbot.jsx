@@ -28,7 +28,7 @@ const EnhancedMealPlanner = () => {
   const fileInputRef = useRef(null);
 
   // Initialize Gemini AI
-  const genAI = new GoogleGenerativeAI("AIzaSyCP6x8fpl4XxdLNdgLzx0NUYGKqR5RnzWs");
+  const genAI = new GoogleGenerativeAI("AIzaSyAzyrzOgb5JbuPhzxL4LSRpFIrBDbUfTf8");
   const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
 
   // Initialize speech recognition
@@ -288,8 +288,12 @@ const EnhancedMealPlanner = () => {
       const base64Image = await fileToBase64(file);
       const imageUrl = URL.createObjectURL(file);
   
-      // First, get a description of the image and any visible text
-      const imageDescriptionPrompt = "Describe this image in detail, focusing on any visible food, ingredients, recipes, or nutritional information. Include any text you can see in the image.";
+      // Create a focused prompt for food recognition and nutrition
+      const imageAnalysisPrompt = `Please analyze this food image and provide:
+      1. Identify the type(s) of food visible
+      2. Estimate nutritional values where possible (calories, protein, carbs, fats)
+      3. List any visible ingredients or components
+      Please format as a clear description without day numbers or meal plan structure.`;
       
       const imageData = {
         inlineData: {
@@ -298,24 +302,23 @@ const EnhancedMealPlanner = () => {
         }
       };
   
-      // Generate image description using Gemini Pro Vision
-      const descriptionResult = await model.generateContent([imageDescriptionPrompt, imageData]);
-      const imageDescription = await descriptionResult.response.text();
+      // Generate image analysis using Gemini Pro Vision
+      const analysisResult = await model.generateContent([imageAnalysisPrompt, imageData]);
+      const foodAnalysis = await analysisResult.response.text();
   
-      // Create prompt for meal plan based on image content
-      const mealPlanPrompt = `Based on this image content: "${imageDescription}"
-      Please create a structured meal plan. If you see specific meals or recipes, include those.
-      If you see ingredients, suggest meals that could be made with them.
-      Include estimated nutritional information where possible.
-      Format the response with clear sections for:
-      - Breakfast
-      - Lunch
-      - Dinner
-      Include calorie estimates and major nutrients if possible.`;
+      // Create nutrition-focused prompt based on identified food
+      const nutritionPrompt = `Based on the identified food: "${foodAnalysis}"
+      Please provide:
+      - Key nutrients and their amounts
+      - Any relevant dietary information or considerations
+      Format as a simple nutritional analysis without meal planning structure.`;
   
-      // Generate meal plan response
-      const mealPlanResult = await model.generateContent(mealPlanPrompt);
-      const mealPlanResponse = mealPlanResult.response.text();
+      // Generate nutritional information
+      const nutritionResult = await model.generateContent(nutritionPrompt);
+      const nutritionAnalysis = nutritionResult.response.text();
+  
+      // Combine analysis results
+      const combinedAnalysis = `Food Analysis:\n${foodAnalysis}\n\nNutritional Information:\n${nutritionAnalysis}`;
   
       // Create user image message
       const userImageMessage = {
@@ -331,12 +334,12 @@ const EnhancedMealPlanner = () => {
       await saveMessage(userImageMessage);
       setMessages(prev => [...prev, userImageMessage]);
   
-      // Create bot message with detected content and meal plan
+      // Create bot message with analysis
       const botMessage = {
         sender: "bot",
         text: "Image Analysis Results",
         topic: currentTopic,
-        content: mealPlanResponse,
+        content: combinedAnalysis,
         timestamp: new Date().toISOString()
       };
   
@@ -344,9 +347,39 @@ const EnhancedMealPlanner = () => {
       await saveMessage(botMessage);
       setMessages(prev => [...prev, botMessage]);
   
-      // Format and save structured meals
-      const structuredMeals = formatMealPlan(mealPlanResponse);
-      saveMealPlanToCalendar(structuredMeals);
+      // Format and structure the meal data
+      const foodData = {
+        description: foodAnalysis,
+        nutrients: nutritionAnalysis
+      };
+  
+      // Save to current date in calendar if needed
+      const dateString = selectedDate.toISOString();
+      const currentMealPlan = mealPlans[dateString] || {
+        date: dateString,
+        meals: {
+          breakfast: {},
+          lunch: {},
+          dinner: {}
+        },
+        completed: {
+          breakfast: false,
+          lunch: false,
+          dinner: false
+        }
+      };
+  
+      // Save to Firebase
+      try {
+        const mealPlanRef = doc(db, "mealPlans", dateString);
+        await setDoc(mealPlanRef, {
+          ...currentMealPlan,
+          imageAnalysis: foodData
+        });
+      } catch (error) {
+        console.error('Error saving food analysis to Firebase:', error);
+        setErrorMessage('Failed to save food analysis');
+      }
   
     } catch (error) {
       console.error('Image Processing Error:', error);
@@ -355,6 +388,7 @@ const EnhancedMealPlanner = () => {
       setIsProcessingImage(false);
     }
   };
+
   const fileToBase64 = (file) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -381,102 +415,174 @@ const EnhancedMealPlanner = () => {
 
   // Generate meal plan
   // In your generateMealPlan function, modify it to handle different durations:
-  const generateMealPlan = async (prompt) => {
-    try {
-      const validKeywords = ['meal', 'diet', 'food', 'breakfast', 'lunch', 'dinner', 'plan', 'calories', 'nutrition'];
-      const isMealPlanRelated = validKeywords.some((keyword) =>
-        prompt.toLowerCase().includes(keyword)
-      );
+  // const generateMealPlan = async (prompt) => {
+  //   try {
+  //     const validKeywords = ['meal', 'diet', 'food', 'breakfast', 'lunch', 'dinner', 'plan', 'calories', 'nutrition'];
+  //     const isMealPlanRelated = validKeywords.some((keyword) =>
+  //       prompt.toLowerCase().includes(keyword)
+  //     );
   
-      if (!isMealPlanRelated) {
-        throw new Error("The prompt is not related to meal planning. Please provide a relevant request.");
+  //     if (!isMealPlanRelated) {
+  //       throw new Error("The prompt is not related to meal planning. Please provide a relevant request.");
+  //     }
+  
+  //     const promptLower = prompt.toLowerCase();
+  //     let duration = 1; // Default to one day
+  
+  //     // Check for specific day mentions
+  //     if (promptLower.includes('month')) duration = 30;
+  //     else if (promptLower.includes('week') || promptLower.includes('7 day')) duration = 7;
+  //     else {
+  //       for (let i = 6; i >= 1; i--) {
+  //         if (promptLower.includes(`${i} day`)) {
+  //           duration = i;
+  //           break;
+  //         }
+  //       }
+  //     }
+  
+  //     const dates = generateDates(selectedDate, duration);
+  //     const durationText = duration === 30 ? 'monthly' : 
+  //                         duration === 7 ? 'weekly' : 
+  //                         duration === 1 ? 'daily' : 
+  //                         `${duration}-day`;
+  
+  //     const enhancedPrompt = `Create a detailed ${durationText} meal plan with the following requirements:
+  //     ${prompt}\n
+  //     Please provide a UNIQUE and DIFFERENT meal plan for each day, following this EXACT format:
+      
+  //     Day 1:
+  //     Breakfast: [unique meal] (calories)
+  //     Lunch: [unique meal] (calories)
+  //     Dinner: [unique meal] (calories)
+      
+  //     [Continue same format for all ${duration} days]
+      
+  //     Important guidelines:
+  //     - Each day MUST be clearly labeled as "Day 1", "Day 2", etc.
+  //     - Create completely different meals for each day
+  //     - Include specific calorie counts for each meal
+  //     - Ensure all ${duration} days are distinct and varied
+  //     - Consider nutritional balance`;
+  
+  //     const result = await model.generateContent(enhancedPrompt);
+  //     const response = await result.response.text();
+  
+  //     const dayCount = (response.match(/Day \d+:/g) || []).length;
+  //     if (dayCount < duration) {
+  //       throw new Error(`AI response incomplete: Only received ${dayCount} days of ${duration} requested. Retrying...`);
+  //     }
+  
+  //     return await formatAndSaveMealPlans(response, dates);
+  //   } catch (error) {
+  //     console.error('Error generating meal plan:', error);
+  //     throw new Error(error.message || 'Failed to generate a meal plan. Please try again.');
+  //   }
+  // };
+  // Modified generateMealPlan function with batch processing
+const generateMealPlan = async (prompt) => {
+  try {
+    const validKeywords = ['meal', 'diet', 'food', 'breakfast', 'lunch', 'dinner', 'plan', 'calories', 'nutrition'];
+    const isMealPlanRelated = validKeywords.some((keyword) =>
+      prompt.toLowerCase().includes(keyword)
+    );
+
+    if (!isMealPlanRelated) {
+      throw new Error("The prompt is not related to meal planning. Please provide a relevant request.");
+    }
+
+    const promptLower = prompt.toLowerCase();
+    let duration = 1; // Default to one day
+
+    // Check for specific day mentions
+    if (promptLower.includes('month')) duration = 30;
+    else if (promptLower.includes('week') || promptLower.includes('7 day')) duration = 7;
+    else {
+      for (let i = 6; i >= 1; i--) {
+        if (promptLower.includes(`${i} day`)) {
+          duration = i;
+          break;
+        }
       }
-  
-      const duration = prompt.toLowerCase().includes('week') ? 7 : 1;
-      const dates = generateDates(selectedDate, duration);
-  
-      // Enhanced prompt to generate clearly labeled daily meal plans
-      let enhancedPrompt = `Create a detailed ${duration}-day meal plan with the following requirements:
+    }
+
+    const dates = generateDates(selectedDate, duration);
+    const batchSize = 7; // Process 7 days at a time
+    const allMealPlans = {};
+
+    // Process in batches
+    for (let i = 0; i < duration; i += batchSize) {
+      const currentBatchSize = Math.min(batchSize, duration - i);
+      const batchDates = dates.slice(i, i + currentBatchSize);
+      
+      const batchPrompt = `Create a detailed meal plan for ${currentBatchSize} days (Days ${i + 1}-${i + currentBatchSize}) with these requirements:
       ${prompt}\n
       Please provide a UNIQUE and DIFFERENT meal plan for each day, following this EXACT format:
       
-      Day 1:
-      ===DAY START===
-      Breakfast: [unique meal] (calories and key nutrients)
-      Lunch: [unique meal] (calories and key nutrients)
-      Dinner: [unique meal] (calories and key nutrients)
-      ===DAY END===
-  
-      Day 2:
-      ===DAY START===
-      Breakfast: [unique meal] (calories and key nutrients)
-      Lunch: [unique meal] (calories and key nutrients)
-      Dinner: [unique meal] (calories and key nutrients)
-      ===DAY END===
-  
-      [Continue same format for Days 3-7]
-  
-      Important guidelines:
-      - Each day MUST be clearly labeled as "Day 1", "Day 2", etc.
-      - Create completely different meals for each day
-      - Include specific calorie counts and key nutrients for each meal
-      - Maintain consistent formatting with day labels and ===DAY START===, ===DAY END=== markers
-      - Ensure all 7 days are distinct and varied
-      - Consider nutritional balance across the week`;
-  
-      const result = await model.generateContent(enhancedPrompt);
-      const response = await result.response.text();
-  
-      // Verify we got the expected number of day sections
-      const dayCount = (response.match(/Day \d+:/g) || []).length;
-      const sectionCount = (response.match(/===DAY START===/g) || []).length;
+      Day ${i + 1}:
+      Breakfast: [unique meal] (calories)
+      Lunch: [unique meal] (calories)
+      Dinner: [unique meal] (calories)
       
-      if (dayCount < duration || sectionCount < duration) {
-        throw new Error(`AI response incomplete: Only received ${dayCount} days of ${duration} requested. Retrying...`);
+      [Continue same format for all ${currentBatchSize} days]
+      
+      Important guidelines:
+      - Each day MUST be clearly labeled as "Day X"
+      - Create completely different meals for each day
+      - Include specific calorie counts for each meal
+      - Ensure all days are distinct and varied
+      - Consider nutritional balance
+      
+      Previous meals generated: ${Object.keys(allMealPlans).length} days
+      Current batch: Days ${i + 1}-${i + currentBatchSize}`;
+
+      const result = await model.generateContent(batchPrompt);
+      const response = await result.response.text();
+
+      // Validate batch response
+      const dayCount = (response.match(/Day \d+:/g) || []).length;
+      if (dayCount < currentBatchSize) {
+        throw new Error(`Batch generation incomplete: Only received ${dayCount} days of ${currentBatchSize} requested. Retrying batch...`);
       }
-  
-      await formatAndSaveMealPlans(response, dates);
-      return response;
-    } catch (error) {
-      console.error('Error generating meal plan:', error);
-      throw new Error(error.message || 'Failed to generate a meal plan. Please try again.');
+
+      // Format and save batch
+      const batchMealPlans = await formatAndSaveMealPlans(response, batchDates);
+      Object.assign(allMealPlans, batchMealPlans);
+
+      // Add delay between batches to prevent rate limiting
+      if (i + batchSize < duration) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
     }
-  };
 
-  // Save meal plan to calendar
-  // const saveMealPlanToCalendar = (structuredMeals) => {
-  //   const mealPlanData = {
-  //     date: selectedDate.toISOString(),
-  //     meals: structuredMeals,
-  //     completed: {
-  //       breakfast: false,
-  //       lunch: false,
-  //       dinner: false
-  //     }
-  //   };
+    // Validate final result
+    if (Object.keys(allMealPlans).length !== duration) {
+      throw new Error(`Failed to generate complete meal plan: Only generated ${Object.keys(allMealPlans).length} of ${duration} days`);
+    }
 
-  //   setMealPlans(prev => ({
-  //     ...prev,
-  //     [selectedDate.toISOString()]: mealPlanData
-  //   }));
-  // };
+    return allMealPlans;
+  } catch (error) {
+    console.error('Error generating meal plan:', error);
+    throw new Error(error.message || 'Failed to generate a meal plan. Please try again.');
+  }
+};
+
+// Helper function to break down responses into days
+const parseDayPlans = (response) => {
+  const days = [];
+  const dayMatches = response.match(/Day \d+:[\s\S]*?(?=Day \d+:|$)/g) || [];
+  
+  return dayMatches.map(day => day.trim());
+};
 
   const formatAndSaveMealPlans = async (response, dates) => {
-    // Split response into individual day plans
     const dayPlans = response
       .split(/Day \d+:/g)
       .filter(day => day.trim())
-      .map(day => {
-        const planContent = day
-          .split('===DAY START===')[1]
-          ?.split('===DAY END===')[0]
-          ?.trim();
-        return planContent;
-      });
+      .map(day => day.trim());
     
     const newMealPlans = {};
     
-    // Process each day's meal plan
     for (let i = 0; i < dates.length; i++) {
       if (!dayPlans[i]) {
         console.error(`Missing meal plan for day ${i + 1}`);
@@ -485,20 +591,19 @@ const EnhancedMealPlanner = () => {
   
       const date = dates[i];
       const dateString = date.toISOString();
-      
       const structuredMeals = formatMealPlan(dayPlans[i]);
       
-      // Verify meal plan has content
-      if (!structuredMeals.breakfast.description || 
-          !structuredMeals.lunch.description || 
-          !structuredMeals.dinner.description) {
+      if (!structuredMeals ||
+          !structuredMeals.breakfast?.description ||
+          !structuredMeals.lunch?.description ||
+          !structuredMeals.dinner?.description) {
         console.error(`Incomplete meal plan for day ${i + 1}`);
         continue;
       }
       
       newMealPlans[dateString] = {
         date: dateString,
-        dayNumber: i + 1,  // Add day number for reference
+        dayNumber: i + 1,
         meals: structuredMeals,
         completed: {
           breakfast: false,
@@ -507,17 +612,24 @@ const EnhancedMealPlanner = () => {
         }
       };
       
-      // Save to Firebase with error handling
-      try {
-        const mealPlanRef = doc(db, "mealPlans", dateString);
-        await setDoc(mealPlanRef, newMealPlans[dateString]);
-      } catch (error) {
-        console.error(`Error saving meal plan for day ${i + 1} to Firebase:`, error);
-        setErrorMessage(`Failed to save meal plan for ${date.toLocaleDateString()}`);
+      // Save to Firebase with retries
+      let retries = 3;
+      while (retries > 0) {
+        try {
+          const mealPlanRef = doc(db, "mealPlans", dateString);
+          await setDoc(mealPlanRef, newMealPlans[dateString]);
+          break;
+        } catch (error) {
+          retries--;
+          if (retries === 0) {
+            console.error(`Error saving meal plan for day ${i + 1} to Firebase:`, error);
+            setErrorMessage(`Failed to save meal plan for ${date.toLocaleDateString()}`);
+          }
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
       }
     }
     
-    // Update local state with all new meal plans
     setMealPlans(prev => ({
       ...prev,
       ...newMealPlans
@@ -855,28 +967,42 @@ const CalendarView = () => {
 };
 
 // Message Bubble Component
-const MessageBubble = ({ message }) => (
-  <div className={`flex ${message.sender === 'bot' ? 'justify-start' : 'justify-end'} mb-4`}>
-    <div className={`
-      max-w-[70%] rounded-2xl p-4
-      ${message.sender === 'bot' 
-        ? 'bg-white border border-gray-200 text-gray-800' 
-        : 'bg-blue-500 text-white'}
-    `}>
-      {message.type === 'image' ? (
-        <img src={message.content} alt="Meal" className="rounded-lg max-w-full" />
-      ) : (
-        <p>{message.content}</p>
-      )}
+const MessageBubble = ({ message }) => {
+  // Extract content safely from the message
+  const getDisplayContent = () => {
+    if (typeof message.content === 'string') {
+      return message.content;
+    }
+    if (message.type === 'image') {
+      return <img src={message.content} alt="Meal" className="rounded-lg max-w-full" />;
+    }
+    // If content is an object, convert it to a readable format
+    if (typeof message.content === 'object' && message.content !== null) {
+      return JSON.stringify(message.content, null, 2);
+    }
+    return 'Content unavailable';
+  };
+
+  return (
+    <div className={`flex ${message.sender === 'bot' ? 'justify-start' : 'justify-end'} mb-4`}>
       <div className={`
-        text-xs mt-2
-        ${message.sender === 'bot' ? 'text-gray-500' : 'text-blue-100'}
+        max-w-[70%] rounded-2xl p-4
+        ${message.sender === 'bot' 
+          ? 'bg-white border border-gray-200 text-gray-800' 
+          : 'bg-blue-500 text-white'}
       `}>
-        {formatRelative(new Date(message.timestamp), new Date())}
+        <div className="whitespace-pre-wrap">{getDisplayContent()}</div>
+        <div className={`
+          text-xs mt-2
+          ${message.sender === 'bot' ? 'text-gray-500' : 'text-blue-100'}
+        `}>
+          {formatRelative(new Date(message.timestamp), new Date())}
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
+
 
 return (
   <div className="flex h-screen bg-gray-100">
