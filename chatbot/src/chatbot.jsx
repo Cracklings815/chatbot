@@ -395,35 +395,43 @@ const EnhancedMealPlanner = () => {
       const duration = prompt.toLowerCase().includes('week') ? 7 : 1;
       const dates = generateDates(selectedDate, duration);
   
-      // Enhanced prompt to generate distinct meal plans for each day
+      // Enhanced prompt to generate clearly labeled daily meal plans
       let enhancedPrompt = `Create a detailed ${duration}-day meal plan with the following requirements:
       ${prompt}\n
-      Please provide a UNIQUE and DIFFERENT meal plan for each day, following this EXACT format for EACH day:
+      Please provide a UNIQUE and DIFFERENT meal plan for each day, following this EXACT format:
       
+      Day 1:
       ===DAY START===
       Breakfast: [unique meal] (calories and key nutrients)
       Lunch: [unique meal] (calories and key nutrients)
       Dinner: [unique meal] (calories and key nutrients)
       ===DAY END===
-      
-      Important:
-      - Create ${duration} different meal plans
-      - Each day should have completely different meals
-      - Include specific calorie counts and nutrients for each meal
-      - Format must be exactly as shown above for proper parsing
-      - Repeat the format ${duration} times, once for each day`;
   
-      // If it's a week-long plan, add extra guidance
-      if (duration === 7) {
-        enhancedPrompt += `\n\nPlease ensure you provide 7 DISTINCT day sections, each starting with ===DAY START=== and ending with ===DAY END===. Each day should have different meals to provide variety throughout the week.`;
-      }
+      Day 2:
+      ===DAY START===
+      Breakfast: [unique meal] (calories and key nutrients)
+      Lunch: [unique meal] (calories and key nutrients)
+      Dinner: [unique meal] (calories and key nutrients)
+      ===DAY END===
+  
+      [Continue same format for Days 3-7]
+  
+      Important guidelines:
+      - Each day MUST be clearly labeled as "Day 1", "Day 2", etc.
+      - Create completely different meals for each day
+      - Include specific calorie counts and key nutrients for each meal
+      - Maintain consistent formatting with day labels and ===DAY START===, ===DAY END=== markers
+      - Ensure all 7 days are distinct and varied
+      - Consider nutritional balance across the week`;
   
       const result = await model.generateContent(enhancedPrompt);
       const response = await result.response.text();
   
       // Verify we got the expected number of day sections
-      const dayCount = (response.match(/===DAY START===/g) || []).length;
-      if (dayCount < duration) {
+      const dayCount = (response.match(/Day \d+:/g) || []).length;
+      const sectionCount = (response.match(/===DAY START===/g) || []).length;
+      
+      if (dayCount < duration || sectionCount < duration) {
         throw new Error(`AI response incomplete: Only received ${dayCount} days of ${duration} requested. Retrying...`);
       }
   
@@ -456,9 +464,15 @@ const EnhancedMealPlanner = () => {
   const formatAndSaveMealPlans = async (response, dates) => {
     // Split response into individual day plans
     const dayPlans = response
-      .split('===DAY START===')
+      .split(/Day \d+:/g)
       .filter(day => day.trim())
-      .map(day => day.split('===DAY END===')[0].trim());
+      .map(day => {
+        const planContent = day
+          .split('===DAY START===')[1]
+          ?.split('===DAY END===')[0]
+          ?.trim();
+        return planContent;
+      });
     
     const newMealPlans = {};
     
@@ -484,6 +498,7 @@ const EnhancedMealPlanner = () => {
       
       newMealPlans[dateString] = {
         date: dateString,
+        dayNumber: i + 1,  // Add day number for reference
         meals: structuredMeals,
         completed: {
           breakfast: false,
