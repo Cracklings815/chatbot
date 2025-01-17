@@ -28,7 +28,7 @@ const EnhancedMealPlanner = () => {
   const fileInputRef = useRef(null);
 
   // Initialize Gemini AI
-  const genAI = new GoogleGenerativeAI("AIzaSyDBYiHd3rcaqmtoEoRciui0zEz0wK4Um88");
+  const genAI = new GoogleGenerativeAI("AIzaSyCP6x8fpl4XxdLNdgLzx0NUYGKqR5RnzWs");
   const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
 
   // Initialize speech recognition
@@ -196,71 +196,68 @@ const EnhancedMealPlanner = () => {
   // Format meal plan from AI response
   const formatMealPlan = (response) => {
     const meals = {
-        breakfast: { description: '', nutrients: '' },
-        lunch: { description: '', nutrients: '' },
-        dinner: { description: '', nutrients: '' }
+      breakfast: { description: '', nutrients: '' },
+      lunch: { description: '', nutrients: '' },
+      dinner: { description: '', nutrients: '' }
     };
-
+  
     try {
-        // Split by meal markers
-        const lines = response.split('\n');
-        let currentMeal = null;
-
-        lines.forEach(line => {
-            line = line.trim();
-            
-            // Check for meal headers with more flexible matching
-            if (line.toLowerCase().includes('breakfast')) {
-                currentMeal = 'breakfast';
-                const [_, ...description] = line.split(':');
-                if (description.length > 0) {
-                    const [mealDesc, ...nutrients] = description.join(':').split('(');
-                    meals.breakfast.description = mealDesc.trim();
-                    if (nutrients.length > 0) {
-                        meals.breakfast.nutrients = nutrients.join('(').replace(/\)$/, '').trim();
-                    }
-                }
-            } else if (line.toLowerCase().includes('lunch')) {
-                currentMeal = 'lunch';
-                const [_, ...description] = line.split(':');
-                if (description.length > 0) {
-                    const [mealDesc, ...nutrients] = description.join(':').split('(');
-                    meals.lunch.description = mealDesc.trim();
-                    if (nutrients.length > 0) {
-                        meals.lunch.nutrients = nutrients.join('(').replace(/\)$/, '').trim();
-                    }
-                }
-            } else if (line.toLowerCase().includes('dinner')) {
-                currentMeal = 'dinner';
-                const [_, ...description] = line.split(':');
-                if (description.length > 0) {
-                    const [mealDesc, ...nutrients] = description.join(':').split('(');
-                    meals.dinner.description = mealDesc.trim();
-                    if (nutrients.length > 0) {
-                        meals.dinner.nutrients = nutrients.join('(').replace(/\)$/, '').trim();
-                    }
-                }
-            } else if (currentMeal && line.length > 0 && !line.startsWith('*') && !line.startsWith('#')) {
-                // Append additional details to current meal description
-                meals[currentMeal].description += ' ' + line.trim();
+      const lines = response.split('\n');
+      let currentMeal = null;
+  
+      lines.forEach(line => {
+        line = line.trim();
+        
+        if (line.toLowerCase().includes('breakfast')) {
+          currentMeal = 'breakfast';
+          const [_, ...description] = line.split(':');
+          if (description.length > 0) {
+            const [mealDesc, ...nutrients] = description.join(':').split('(');
+            meals.breakfast.description = mealDesc.trim();
+            if (nutrients.length > 0) {
+              meals.breakfast.nutrients = nutrients.join('(').replace(/\)$/, '').trim();
             }
-        });
-    } catch (error) {
-        console.error('Error parsing meal plan:', error);
-    }
-
-    // Clean up descriptions by removing markdown symbols and extra spaces
-    Object.keys(meals).forEach(meal => {
+          }
+        } else if (line.toLowerCase().includes('lunch')) {
+          currentMeal = 'lunch';
+          const [_, ...description] = line.split(':');
+          if (description.length > 0) {
+            const [mealDesc, ...nutrients] = description.join(':').split('(');
+            meals.lunch.description = mealDesc.trim();
+            if (nutrients.length > 0) {
+              meals.lunch.nutrients = nutrients.join('(').replace(/\)$/, '').trim();
+            }
+          }
+        } else if (line.toLowerCase().includes('dinner')) {
+          currentMeal = 'dinner';
+          const [_, ...description] = line.split(':');
+          if (description.length > 0) {
+            const [mealDesc, ...nutrients] = description.join(':').split('(');
+            meals.dinner.description = mealDesc.trim();
+            if (nutrients.length > 0) {
+              meals.dinner.nutrients = nutrients.join('(').replace(/\)$/, '').trim();
+            }
+          }
+        } else if (currentMeal && line.length > 0 && !line.startsWith('===')) {
+          meals[currentMeal].description += ' ' + line.trim();
+        }
+      });
+  
+      // Clean up descriptions
+      Object.keys(meals).forEach(meal => {
         meals[meal].description = meals[meal].description
-            .replace(/\*/g, '')
-            .replace(/#+/g, '')
-            .replace(/\s+/g, ' ')
-            .trim();
-    });
-
-    console.log("Formatted meals:", meals);
+          .replace(/\*/g, '')
+          .replace(/#+/g, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+      });
+  
+    } catch (error) {
+      console.error('Error parsing meal plan:', error);
+    }
+  
     return meals;
-};
+  };
 
   // Save message to Firebase
   const saveMessage = async (message) => {
@@ -386,7 +383,6 @@ const EnhancedMealPlanner = () => {
   // In your generateMealPlan function, modify it to handle different durations:
   const generateMealPlan = async (prompt) => {
     try {
-      // Validate if the prompt is related to meal planning
       const validKeywords = ['meal', 'diet', 'food', 'breakfast', 'lunch', 'dinner', 'plan', 'calories', 'nutrition'];
       const isMealPlanRelated = validKeywords.some((keyword) =>
         prompt.toLowerCase().includes(keyword)
@@ -396,30 +392,43 @@ const EnhancedMealPlanner = () => {
         throw new Error("The prompt is not related to meal planning. Please provide a relevant request.");
       }
   
-      // Determine the duration based on the prompt
       const duration = prompt.toLowerCase().includes('week') ? 7 : 1;
-  
-      // Generate the dates for the meal plan
       const dates = generateDates(selectedDate, duration);
   
-      // Enhance the prompt for better AI guidance
-      let enhancedPrompt = prompt;
-      if (duration > 1) {
-        enhancedPrompt = `Create a ${duration}-day meal plan, clearly separated by days. For each day, include:\n` +
-          `- Breakfast with calories and nutrients\n` +
-          `- Lunch with calories and nutrients\n` +
-          `- Dinner with calories and nutrients\n` +
-          `Based on this request: ${prompt}`;
+      // Enhanced prompt to generate distinct meal plans for each day
+      let enhancedPrompt = `Create a detailed ${duration}-day meal plan with the following requirements:
+      ${prompt}\n
+      Please provide a UNIQUE and DIFFERENT meal plan for each day, following this EXACT format for EACH day:
+      
+      ===DAY START===
+      Breakfast: [unique meal] (calories and key nutrients)
+      Lunch: [unique meal] (calories and key nutrients)
+      Dinner: [unique meal] (calories and key nutrients)
+      ===DAY END===
+      
+      Important:
+      - Create ${duration} different meal plans
+      - Each day should have completely different meals
+      - Include specific calorie counts and nutrients for each meal
+      - Format must be exactly as shown above for proper parsing
+      - Repeat the format ${duration} times, once for each day`;
+  
+      // If it's a week-long plan, add extra guidance
+      if (duration === 7) {
+        enhancedPrompt += `\n\nPlease ensure you provide 7 DISTINCT day sections, each starting with ===DAY START=== and ending with ===DAY END===. Each day should have different meals to provide variety throughout the week.`;
       }
   
-      // Generate content from the AI model
       const result = await model.generateContent(enhancedPrompt);
       const response = await result.response.text();
   
-      // Format and save the meal plans for the specified dates
-      await formatAndSaveMealPlans(response, dates);
+      // Verify we got the expected number of day sections
+      const dayCount = (response.match(/===DAY START===/g) || []).length;
+      if (dayCount < duration) {
+        throw new Error(`AI response incomplete: Only received ${dayCount} days of ${duration} requested. Retrying...`);
+      }
   
-      return response; // Return the AI-generated meal plan
+      await formatAndSaveMealPlans(response, dates);
+      return response;
     } catch (error) {
       console.error('Error generating meal plan:', error);
       throw new Error(error.message || 'Failed to generate a meal plan. Please try again.');
@@ -427,37 +436,51 @@ const EnhancedMealPlanner = () => {
   };
 
   // Save meal plan to calendar
-  const saveMealPlanToCalendar = (structuredMeals) => {
-    const mealPlanData = {
-      date: selectedDate.toISOString(),
-      meals: structuredMeals,
-      completed: {
-        breakfast: false,
-        lunch: false,
-        dinner: false
-      }
-    };
+  // const saveMealPlanToCalendar = (structuredMeals) => {
+  //   const mealPlanData = {
+  //     date: selectedDate.toISOString(),
+  //     meals: structuredMeals,
+  //     completed: {
+  //       breakfast: false,
+  //       lunch: false,
+  //       dinner: false
+  //     }
+  //   };
 
-    setMealPlans(prev => ({
-      ...prev,
-      [selectedDate.toISOString()]: mealPlanData
-    }));
-  };
+  //   setMealPlans(prev => ({
+  //     ...prev,
+  //     [selectedDate.toISOString()]: mealPlanData
+  //   }));
+  // };
 
   const formatAndSaveMealPlans = async (response, dates) => {
-    // Split the response into days if it's a multi-day plan
-    const dayPlans = response.split(/Day \d+:/g)
+    // Split response into individual day plans
+    const dayPlans = response
+      .split('===DAY START===')
       .filter(day => day.trim())
-      .map(day => day.trim());
+      .map(day => day.split('===DAY END===')[0].trim());
     
     const newMealPlans = {};
     
-    for (let i = 0; i < Math.min(dayPlans.length, dates.length); i++) {
-      const dayPlan = dayPlans[i];
+    // Process each day's meal plan
+    for (let i = 0; i < dates.length; i++) {
+      if (!dayPlans[i]) {
+        console.error(`Missing meal plan for day ${i + 1}`);
+        continue;
+      }
+  
       const date = dates[i];
       const dateString = date.toISOString();
       
-      const structuredMeals = formatMealPlan(dayPlan);
+      const structuredMeals = formatMealPlan(dayPlans[i]);
+      
+      // Verify meal plan has content
+      if (!structuredMeals.breakfast.description || 
+          !structuredMeals.lunch.description || 
+          !structuredMeals.dinner.description) {
+        console.error(`Incomplete meal plan for day ${i + 1}`);
+        continue;
+      }
       
       newMealPlans[dateString] = {
         date: dateString,
@@ -474,9 +497,8 @@ const EnhancedMealPlanner = () => {
         const mealPlanRef = doc(db, "mealPlans", dateString);
         await setDoc(mealPlanRef, newMealPlans[dateString]);
       } catch (error) {
-        console.error("Error saving meal plan to Firebase:", error);
-        // Optionally set an error message for the user
-        setErrorMessage("Failed to save meal plan to database");
+        console.error(`Error saving meal plan for day ${i + 1} to Firebase:`, error);
+        setErrorMessage(`Failed to save meal plan for ${date.toLocaleDateString()}`);
       }
     }
     
@@ -485,7 +507,7 @@ const EnhancedMealPlanner = () => {
       ...prev,
       ...newMealPlans
     }));
-    console.log("Updated meal plans:", newMealPlans); 
+    
     return newMealPlans;
   };
 
@@ -585,93 +607,93 @@ const EnhancedMealPlanner = () => {
   };
 
   // Sidebar Component
-  const Sidebar = () => {
-    if (!historyVisible) return null;
+//   const Sidebar = () => {
+//     if (!historyVisible) return null;
 
-    return (
-      <div className="fixed inset-0 z-30 flex">
-        <div 
-          className="absolute inset-0 bg-black/20" 
-          onClick={() => setHistoryVisible(false)}
-        />
+//     return (
+//       <div className="fixed inset-0 z-30 flex">
+//         <div 
+//           className="absolute inset-0 bg-black/20" 
+//           onClick={() => setHistoryVisible(false)}
+//         />
 
-        <div className="relative w-80 max-w-[calc(100%-3rem)] bg-white shadow-xl animate-in slide-in-from-left">
-          <div className="p-4 border-b border-gray-200">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">Chat History</h2>
-              <button 
-                onClick={() => setHistoryVisible(false)}
-                className="p-2 text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-100"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+//         <div className="relative w-80 max-w-[calc(100%-3rem)] bg-white shadow-xl animate-in slide-in-from-left">
+//           <div className="p-4 border-b border-gray-200">
+//             <div className="flex items-center justify-between mb-4">
+//               <h2 className="text-lg font-semibold text-gray-900">Chat History</h2>
+//               <button 
+//                 onClick={() => setHistoryVisible(false)}
+//                 className="p-2 text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-100"
+//               >
+//                 <X className="w-5 h-5" />
+//               </button>
+//             </div>
 
-            <button
-              onClick={() => setIsNewTopicInputVisible(true)}
-              className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2 group"
-            >
-              <Plus className="w-4 h-4 text-gray-500 group-hover:text-gray-700" />
-              New Topic
-            </button>
+//             <button
+//               onClick={() => setIsNewTopicInputVisible(true)}
+//               className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 rounded-lg flex items-center gap-2 group"
+//             >
+//               <Plus className="w-4 h-4 text-gray-500 group-hover:text-gray-700" />
+//               New Topic
+//             </button>
 
-            {isNewTopicInputVisible && (
-              <div className="mt-2 flex gap-2">
-                <input
-                  type="text"
-                  value={newTopicInput}
-                  onChange={(e) => setNewTopicInput(e.target.value)}
-                  placeholder="Enter topic name..."
-                  className="flex-1 px-3 py-1 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      createNewTopic();
-                    }
-                  }}
-                /><button
-                onClick={createNewTopic}
-                className="px-3 py-1 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600"
-              >
-                Add
-              </button>
-            </div>
-          )}
-        </div>
+//             {isNewTopicInputVisible && (
+//               <div className="mt-2 flex gap-2">
+//                 <input
+//                   type="text"
+//                   value={newTopicInput}
+//                   onChange={(e) => setNewTopicInput(e.target.value)}
+//                   placeholder="Enter topic name..."
+//                   className="flex-1 px-3 py-1 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+//                   onKeyDown={(e) => {
+//                     if (e.key === 'Enter') {
+//                       createNewTopic();
+//                     }
+//                   }}
+//                 /><button
+//                 onClick={createNewTopic}
+//                 className="px-3 py-1 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+//               >
+//                 Add
+//               </button>
+//             </div>
+//           )}
+//         </div>
 
-        <div className="p-2">
-          <button
-            onClick={() => setCurrentTopic(null)}
-            className={`w-full px-4 py-2 text-left text-sm rounded-lg flex items-center gap-2 group ${
-              !currentTopic 
-                ? 'bg-blue-50 text-blue-700' 
-                : 'text-gray-700 hover:bg-gray-100'
-            }`}
-          >
-            <Hash className="w-4 h-4" />
-            General
-            <ChevronRight className={`w-4 h-4 ml-auto ${!currentTopic ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} />
-          </button>
+//         <div className="p-2">
+//           <button
+//             onClick={() => setCurrentTopic(null)}
+//             className={`w-full px-4 py-2 text-left text-sm rounded-lg flex items-center gap-2 group ${
+//               !currentTopic 
+//                 ? 'bg-blue-50 text-blue-700' 
+//                 : 'text-gray-700 hover:bg-gray-100'
+//             }`}
+//           >
+//             <Hash className="w-4 h-4" />
+//             General
+//             <ChevronRight className={`w-4 h-4 ml-auto ${!currentTopic ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} />
+//           </button>
 
-          {Object.entries(topics).map(([topicId, topic]) => (
-            <button
-              key={topicId}
-              onClick={() => setCurrentTopic(topicId)}
-              className={`w-full px-4 py-2 text-left text-sm rounded-lg flex items-center gap-2 group ${
-                currentTopic === topicId 
-                  ? 'bg-blue-50 text-blue-700' 
-                  : 'text-gray-700 hover:bg-gray-100'
-              }`}
-            >
-              <Hash className="w-4 h-4" />
-              {topic.name}
-              <ChevronRight className={`w-4 h-4 ml-auto ${currentTopic === topicId ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} />
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-};
+//           {Object.entries(topics).map(([topicId, topic]) => (
+//             <button
+//               key={topicId}
+//               onClick={() => setCurrentTopic(topicId)}
+//               className={`w-full px-4 py-2 text-left text-sm rounded-lg flex items-center gap-2 group ${
+//                 currentTopic === topicId 
+//                   ? 'bg-blue-50 text-blue-700' 
+//                   : 'text-gray-700 hover:bg-gray-100'
+//               }`}
+//             >
+//               <Hash className="w-4 h-4" />
+//               {topic.name}
+//               <ChevronRight className={`w-4 h-4 ml-auto ${currentTopic === topicId ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} />
+//             </button>
+//           ))}
+//         </div>
+//       </div>
+//     </div>
+//   );
+// };
 
 // Calendar View Component
 const CalendarView = () => {
@@ -843,16 +865,10 @@ const MessageBubble = ({ message }) => (
 
 return (
   <div className="flex h-screen bg-gray-100">
-    <Sidebar />
+    {/* Sidebar */}
     
     <div className="flex-1 flex flex-col">
       <div className="p-4 border-b bg-white flex items-center gap-4">
-        <button
-          onClick={() => setHistoryVisible(true)}
-          className="p-2 hover:bg-gray-100 rounded-lg"
-        >
-          <Menu className="w-5 h-5" />
-        </button>
         <h1 className="text-xl font-bold">Mealy</h1>
         {errorMessage && (
           <div className="text-red-500 text-sm ml-auto">{errorMessage}</div>
